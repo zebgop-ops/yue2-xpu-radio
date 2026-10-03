@@ -135,6 +135,24 @@ h2 { font-size: 15px; margin: 0 0 10px; }
 .btn { font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
 .btn.primary { background: var(--red); border-color: var(--red); color: #fff; font-weight: 600; }
 .btn.danger { color: var(--red); }
+.favs { margin-top: 16px; }
+.favs h2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.favs h2 .n { color: var(--muted); font-weight: 500; }
+.favs h2 select { margin-left: auto; width: auto; font-size: 13px; padding: 4px 8px; }
+.favlist { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 10px; }
+.fav { position: relative; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px 10px 18px; min-width: 0;
+       background: linear-gradient(90deg, var(--c1) 0 5px, var(--c2) 5px 9px, transparent 9px), var(--card); }
+.fav.off { opacity: .55; }
+.fav .top { display: flex; gap: 8px; align-items: flex-start; }
+.fav .top .t { flex: 1; min-width: 0; }
+.fav .ti { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fav .meta { font-size: 12px; color: var(--muted); }
+.fav .sty { font-size: 12px; color: var(--muted); margin: 4px 0 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.fav .heart { font-size: 20px; line-height: 1; border: 0; background: none; cursor: pointer; color: #e0245e; padding: 2px 4px; }
+.fav.off .heart { color: var(--muted); }
+.fav audio { width: 100%; height: 34px; margin-top: 2px; }
+.fav .row { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: 13px; }
+.fav details { flex: 1; min-width: 0; } .fav details pre.ly { margin-top: 6px; }
 .hist { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow: auto; }
 .hist li { display: flex; gap: 8px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line); font-size: 14px; }
 .hist li .t { flex: 1; min-width: 0; } .hist li .t div:last-child { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -340,6 +358,10 @@ input[type=text], textarea, select { width: 100%; font: inherit; color: var(--te
       <ul class="hist" id="hist"><li class="muted">—</li></ul>
     </section>
   </div>
+  <section class="panel favs" id="favPanel">
+    <h2>♥ Favorites <span class="n" id="favN"></span><select id="favFilter" aria-label="Filter favorites by station"><option value="">All stations</option></select></h2>
+    <ul class="favlist" id="favs"><li class="muted small">Press ♥ KEEP while a song plays and it lands here.</li></ul>
+  </section>
 </div>
 
 <dialog id="dlg"><div class="dh"><strong id="dlgT">New station</strong><button class="btn" id="dlgX">Close</button></div><div class="db" id="dlgB"></div></dialog>
@@ -546,6 +568,7 @@ audio.addEventListener("ended", reconnect);
 $("kPlay").onclick = async () => {
   ensureAudioGraph(); if (actx && actx.state === "suspended") await actx.resume();
   if (lid) { wantPlay = false; disconnect(); return; }
+  document.querySelectorAll(".fav audio").forEach(a => a.pause());
   if (!selected) return hint("Pick a station first.");
   wantPlay = true;
   if (!R || !R.on || R.station !== selected) {
@@ -559,8 +582,9 @@ $("kKeep").onclick = async () => {
   if (!current) return;
   const kind = current.feedback === "keep" ? "clear" : "keep";
   await post("/api/radio/feedback", {track: current.id, kind}).catch(e => hint(e.message));
-  current.feedback = kind === "keep" ? "keep" : null; $("kKeep").classList.toggle("kept", kind === "keep"); hint(kind === "keep" ? "Kept — the station will lean this way." : "");
-  loadHistory();
+  current.feedback = kind === "keep" ? "keep" : null; $("kKeep").classList.toggle("kept", kind === "keep"); hint(kind === "keep" ? "Kept — it's in ♥ Favorites below." : "");
+  if (kind === "keep") favOff.delete(current.id); else favOff.add(current.id);
+  loadHistory(); loadFavorites();
 };
 $("kPower").onclick = async () => {
   const on = !(R && R.on);
@@ -625,6 +649,54 @@ async function loadHistory() {
   $("hist").innerHTML = r.tracks.length ? r.tracks.map(t => `<li><span>${t.feedback === "keep" ? "♥" : t.feedback === "dislike" ? "✕" : t.feedback === "skip" ? "⏭" : "♪"}</span>
     <div class="t"><div>${esc(t.title)}</div><div>${esc(t.style)}</div></div><a class="btn" href="${t.audio}?download=1" title="Download">⬇</a></li>`).join("") : `<li class="muted">Nothing played on this station yet.</li>`;
 }
+// ---------------- favorites: every kept song, all stations
+let favTracks = [], favOff = new Set(), favSig = "";
+async function loadFavorites() {
+  const r = await api("/api/radio/favorites").catch(() => null); if (!r) return;
+  favTracks = r.tracks.concat(favTracks.filter(t => favOff.has(t.id) && !r.tracks.some(x => x.id === t.id)));   // keep just-unhearted ones visible
+  favTracks.sort((a, b) => b.kept_at - a.kept_at);
+  renderFavorites();
+}
+function renderFavorites() {
+  const sel = $("favFilter"), want = sel.value, names = [...new Set(favTracks.map(t => t.station_name))].sort();
+  const opts = `<option value="">All stations</option>` + names.map(n => `<option ${n === want ? "selected" : ""}>${esc(n)}</option>`).join("");
+  if (sel.innerHTML !== opts) sel.innerHTML = opts;
+  const list = favTracks.filter(t => !want || t.station_name === want);
+  const live = favTracks.filter(t => !favOff.has(t.id)).length;
+  $("favN").textContent = live ? `${live} song${live === 1 ? "" : "s"}` : "";
+  const sig = JSON.stringify([list.map(t => t.id), [...favOff]]); if (sig === favSig) return; favSig = sig;
+  const playing = [...document.querySelectorAll(".fav audio")].find(a => !a.paused);   // don't interrupt a preview
+  if (playing) return;
+  $("favs").innerHTML = list.length ? list.map(t => {
+    const h = hueOf({id: t.station || "", name: t.station_name}), off = favOff.has(t.id);
+    const when = t.kept_at ? new Date(t.kept_at * 1000).toLocaleDateString(undefined, {month: "short", day: "numeric"}) : "";
+    return `<li class="fav ${off ? "off" : ""}" data-id="${esc(t.id)}" style="--c1:hsl(${h} 85% 56%);--c2:hsl(${(h + 32) % 360} 70% 44%)">
+      <div class="top"><div class="t"><div class="ti" title="${esc(t.title)}">${esc(t.title)}</div>
+        <div class="meta">${esc(t.station_name)} · ${mmss(t.seconds)}${when ? " · ♥ " + when : ""}</div></div>
+        <button class="heart" data-heart="${esc(t.id)}" title="${off ? "Add back to favorites" : "Remove from favorites"}" aria-label="${off ? "Add back to favorites" : "Remove from favorites"}">${off ? "♡" : "♥"}</button></div>
+      <div class="sty">${esc(t.style)}</div>
+      <audio controls preload="none" src="${t.audio}"></audio>
+      <div class="row">${t.lyrics ? `<details><summary>Lyrics</summary><pre class="ly">${esc(t.lyrics)}</pre></details>` : `<span class="muted" style="flex:1">Instrumental</span>`}
+        <a class="btn" href="${t.audio}?download=1" title="Download MP3">⬇ MP3</a></div></li>`;
+  }).join("") : `<li class="muted small">${want ? "No favorites on this station yet." : "Press ♥ KEEP while a song plays and it lands here."}</li>`;
+}
+$("favFilter").onchange = () => { favSig = ""; renderFavorites(); };
+$("favs").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-heart]"); if (!b) return;
+  const id = b.dataset.heart, off = favOff.has(id);
+  try {
+    await post("/api/radio/feedback", {track: id, kind: off ? "keep" : "clear"});
+    off ? favOff.delete(id) : favOff.add(id);
+    if (current && current.id === id) { current.feedback = off ? "keep" : null; $("kKeep").classList.toggle("kept", off); }
+    favSig = ""; renderFavorites(); loadHistory();
+  } catch (err) { hint(err.message); }
+});
+// one thing plays at a time: a favorite preview pauses the broadcast (and other previews)
+$("favs").addEventListener("play", (e) => {
+  if (e.target.tagName !== "AUDIO") return;
+  document.querySelectorAll(".fav audio").forEach(a => { if (a !== e.target) a.pause(); });
+  if (lid) { wantPlay = false; disconnect(); hint("Radio paused while you play a favorite — press PLAY to rejoin the broadcast."); }
+}, true);
 $("shelf").onclick = async (e) => {
   const b = e.target.closest("[data-st]"); if (!b) return;
   const id = b.dataset.st; if (id === selected) return openStation(id);
@@ -691,7 +763,8 @@ $("newStation").onclick = () => {
   };
 };
 
-stationColors(null); refresh(); loadHistory(); requestAnimationFrame(vuLoop);
+stationColors(null); refresh(); loadHistory(); loadFavorites(); requestAnimationFrame(vuLoop);
+setInterval(loadFavorites, 30000);          // pick up favorites other listeners add
 setInterval(refresh, 2500);
 </script>
 </body>

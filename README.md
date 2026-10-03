@@ -20,6 +20,7 @@ The radio lives inside a small **Music Studio** (make individual songs or instru
 - **A critic.** Each take is embedded with CLAP and scored against the station (its description, or the corpus of learned songs), nudged by your likes/dislikes, with a near-duplicate penalty. The bottom 15 % (text stations) or 30 % (learned) are dropped.
 - **One shared broadcast.** A playout thread encodes approved tracks to a 192 kbps CBR MP3 stream at real time; every listener — the deck, VLC, a phone — gets the same audio (`/radio/stream.mp3`). New listeners get a 4 s burst so playback starts instantly; the deck works out which song is *audible* from the stream offset, so titles change exactly when the music does. Nobody listening → no songs are used up.
 - **Feedback.** KEEP / SKIP / NOPE shape the station (SKIP and NOPE skip for everyone — it's one broadcast).
+- **♥ Favorites.** Every kept song across all stations in one panel — filter by station, preview (pauses the broadcast for you only), lyrics, MP3 download, un-favorite.
 - **Shares the GPUs with an LLM.** The studio pauses the LLM service (e.g. vLLM) when it needs the cards and restarts it when the radio is switched off or someone presses *Give GPUs back*.
 - **The deck.** A realistic cassette (SVG): tape packs whose radii follow the stream position as a 45-minute side and auto-reverse to side B, hubs that turn at real 4.76 cm/s tape speed (the small reel spins faster), backlit analog VU meters on Web Audio, a VFD, a hand-written label tinted per station.
 
@@ -95,6 +96,7 @@ Open `http://<host>:7860/` (studio) or `http://<host>:7860/radio`. For a service
 | `POST /api/radio/power` `{on, station}` | switch on/off / retune (on = generate; pauses the LLM) |
 | `POST /api/radio/skip` `{track, kind}` | skip (or `kind: "dislike"`) the song on air |
 | `POST /api/radio/feedback` `{track, kind}` | `keep` / `skip` / `dislike` / `clear` |
+| `GET /api/radio/favorites` | every kept song, all stations, newest first |
 | `POST /api/radio/stations` | create `{kind: "text"\|"folder", name, description, vocals, language}` |
 | `PUT /api/radio/stations/<id>/files/<name>` | upload a song to a learned station, then `POST .../analyze` |
 

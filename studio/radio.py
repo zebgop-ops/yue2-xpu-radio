@@ -786,6 +786,24 @@ def next_track(sid, mark=True):
     return track_view(j)
 
 
+def favorites():
+    """Every radio song a listener kept (KEEP / ♥), across all stations, newest favorite first."""
+    with app.lock:
+        fav = [j for j in app.jobs.values() if j.get("source") == "radio" and j.get("radio_feedback") == "keep"]
+    kept = {}
+    with lock:
+        for s in stations.values():
+            for f in s["feedback"]:
+                if f["kind"] == "keep":
+                    kept[f["track"]] = f["t"]
+    out = []
+    for j in fav:
+        st = stations.get(j.get("station"))
+        out.append(track_view(j) | {"station_name": st["name"] if st else "(deleted station)",
+                                    "kept_at": kept.get(j["id"]) or j.get("played_at") or j.get("finished") or 0})
+    return sorted(out, key=lambda t: -t["kept_at"])
+
+
 def history(sid, limit=40):
     with app.lock:
         played = sorted((j for j in app.jobs.values() if j.get("source") == "radio" and j.get("station") == sid and j.get("played_at")),
@@ -870,6 +888,8 @@ def handle(h, method, path):
     if "?" in h.path:
         q = dict(x.split("=", 1) for x in h.path.split("?", 1)[1].split("&") if "=" in x)
     try:
+        if method == "GET" and path == "/api/radio/favorites":
+            return h.send(200, {"tracks": favorites()}) or True
         if method == "GET" and path == "/api/radio/state":
             return h.send(200, api_state(q.get("listener"))) or True
         if method == "POST" and path == "/api/radio/skip":
