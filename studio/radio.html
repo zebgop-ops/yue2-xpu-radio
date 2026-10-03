@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>b70 Radio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Share+Tech+Mono&family=Oswald:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #e9e6df; --text: #1d1d1f; --muted: #6b6860; --panel: #f7f5f0; --line: #d6d1c6;
+  --deck: #1b1c1f; --deck2: #2a2b30; --metal: #8a8d94; --vfd-bg: #071a17; --vfd: #3ff2d0; --vfd-dim: #13544a;
+  --card: #fbf8f0;
+  --red: #e2483d; --amber: #f4b13c; --accent: #e2483d; --ok: #2f9e5c;
+  --mono: "Share Tech Mono", "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #101113; --text: #e8e6e1; --muted: #9a978f; --panel: #18191c; --line: #2b2d31; --card: #1f2024; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+.wrap { max-width: 980px; margin: 0 auto; padding: 18px 16px 60px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 14px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: .04em; }
+a { color: var(--accent); }
+.chip { font-size: 13px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); }
+/* ---------- deck: brushed-metal faceplate */
+.deck { position: relative; border-radius: 16px; padding: 22px 22px 16px; color: #ddd; border: 1px solid #0b0b0c;
+        background:
+          linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,0) 30%, rgba(0,0,0,.28)),
+          repeating-linear-gradient(90deg, rgba(255,255,255,.028) 0 1px, rgba(0,0,0,.035) 1px 2px, transparent 2px 5px),
+          linear-gradient(180deg, #3a3c42, #222327 60%, #1b1c1f);
+        box-shadow: 0 22px 50px rgba(0,0,0,.45), 0 2px 0 #0004, inset 0 1px 0 rgba(255,255,255,.16), inset 0 -2px 0 rgba(0,0,0,.45); }
+.deck .bolt { position: absolute; width: 11px; height: 11px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #d9dce0, #6b6f76 60%, #2c2e33);
+              box-shadow: 0 1px 1px rgba(0,0,0,.6), inset 0 0 0 1px rgba(0,0,0,.35); }
+.deck .bolt::after { content: ""; position: absolute; left: 2px; right: 2px; top: 4.5px; height: 2px; background: #33363b; transform: rotate(30deg); border-radius: 1px; }
+.brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: -6px 4px 12px; font: 500 12px Oswald, system-ui, sans-serif;
+         letter-spacing: .28em; text-transform: uppercase; color: #a9adb5; text-shadow: 0 -1px 0 rgba(0,0,0,.6); }
+.brand b { font: 600 20px Oswald, system-ui, sans-serif; letter-spacing: .08em; color: #eceef1; }
+.brand .r { margin-left: auto; font-size: 10px; color: #7f838b; }
+.vfd { position: relative; border-radius: 8px; padding: 12px 16px; font-family: var(--mono); color: var(--vfd); border: 2px solid #050505;
+       background: radial-gradient(ellipse at 50% 0%, #0d2b26, #04110f 70%);
+       text-shadow: 0 0 4px rgba(63,242,208,.9), 0 0 12px rgba(63,242,208,.45);
+       box-shadow: inset 0 0 22px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.1); overflow: hidden; }
+.vfd::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+              background: linear-gradient(172deg, rgba(255,255,255,.09), rgba(255,255,255,0) 38%),
+                          repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0 1px, transparent 1px 3px); }
+.vfd .l1 { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; letter-spacing: .14em; text-transform: uppercase; }
+.vfd .title { font-size: 26px; letter-spacing: .06em; white-space: nowrap; overflow: hidden; margin: 4px 0 2px; }
+.vfd .title span { display: inline-block; padding-left: 0; }
+.vfd .title.scroll span { animation: marquee 14s linear infinite; padding-left: 100%; }
+@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+.vfd .l3 { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 14px; font-size: 14px; }
+.vfd .dim { color: var(--vfd-dim); text-shadow: none; }
+.spool { letter-spacing: .1em; }
+.mid { display: grid; grid-template-columns: 1fr 230px; gap: 18px; margin: 18px 0 16px; align-items: center; }
+@media (max-width: 760px) { .mid { grid-template-columns: 1fr; } }
+/* cassette well behind a smoked-glass door */
+.well { position: relative; padding: 3.4% 3.6%; border-radius: 14px; max-width: 640px; width: 100%; margin: 0 auto;
+        background: radial-gradient(ellipse at 50% 35%, #1d1e22, #060607 75%);
+        box-shadow: inset 0 8px 22px rgba(0,0,0,.95), inset 0 -1px 0 rgba(255,255,255,.05), 0 1px 0 rgba(255,255,255,.1), 0 -1px 0 rgba(0,0,0,.5);
+        transition: box-shadow .8s; }
+.well.playing { box-shadow: inset 0 8px 22px rgba(0,0,0,.95), inset 0 0 60px rgba(255,186,110,.13), 0 1px 0 rgba(255,255,255,.1), 0 -1px 0 rgba(0,0,0,.5); }
+.cassette { position: relative; aspect-ratio: 1004 / 638; filter: drop-shadow(0 10px 12px rgba(0,0,0,.65)) drop-shadow(0 2px 2px rgba(0,0,0,.6)); }
+.cas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }
+.cas.front { will-change: transform; }
+.door { position: absolute; inset: 0; border-radius: 14px; pointer-events: none;
+        background: linear-gradient(158deg, rgba(255,255,255,.13) 0%, rgba(255,255,255,.035) 26%, transparent 27%, transparent 66%, rgba(255,255,255,.05) 67%, transparent 82%),
+                    linear-gradient(180deg, rgba(60,70,85,.10), rgba(10,12,16,.18));
+        box-shadow: inset 0 0 0 2px rgba(255,255,255,.06), inset 0 2px 0 rgba(255,255,255,.08); }
+.door .eject { position: absolute; right: 12px; bottom: 7px; font: 500 9px Oswald, sans-serif; letter-spacing: .25em; color: rgba(255,255,255,.35); }
+.marker { font-family: "Permanent Marker", "Segoe Print", "Comic Sans MS", cursive; }
+/* VU meters: backlit, behind glass */
+.vus { display: grid; grid-template-columns: 1fr; gap: 14px; }
+@media (max-width: 760px) { .vus { grid-template-columns: 1fr 1fr; max-width: 460px; margin: 0 auto; width: 100%; } }
+.vu { position: relative; aspect-ratio: 1.3; border-radius: 9px; padding: 5px; background: linear-gradient(180deg, #0c0c0d, #222327);
+      box-shadow: 0 1px 0 rgba(255,255,255,.12), inset 0 2px 6px rgba(0,0,0,.9); }
+.vu canvas { width: 100%; height: 100%; display: block; border-radius: 5px; transition: filter .8s; }
+.deck:not(.lit) .vu canvas { filter: brightness(.55) saturate(.7); }
+.vu::after { content: ""; position: absolute; inset: 5px; border-radius: 5px; pointer-events: none;
+             background: linear-gradient(160deg, rgba(255,255,255,.38), rgba(255,255,255,.06) 34%, transparent 35%), radial-gradient(ellipse at 50% 120%, transparent 55%, rgba(0,0,0,.35));
+             box-shadow: inset 0 0 14px rgba(0,0,0,.55); }
+.vu .ch { display: none; }
+/* transport: silver piano keys */
+.transport { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; align-items: center; padding: 14px 10px 6px; margin: 0 -6px;
+             border-radius: 10px; background: linear-gradient(180deg, rgba(0,0,0,.35), rgba(0,0,0,.12)); box-shadow: inset 0 2px 6px rgba(0,0,0,.6); }
+.key { position: relative; font: 600 12px Oswald, system-ui, sans-serif; letter-spacing: .14em; color: #26282c; cursor: pointer; min-width: 78px;
+       padding: 13px 14px 11px; border-radius: 5px 5px 7px 7px; border: 1px solid #7d8189;
+       background: linear-gradient(180deg, #fbfbfc 0%, #e4e6e9 40%, #c3c7cd 100%);
+       box-shadow: 0 5px 0 #6a6e75, 0 7px 12px rgba(0,0,0,.55), inset 0 1px 0 #fff, inset 0 -2px 3px rgba(0,0,0,.12);
+       transition: transform .06s, box-shadow .06s; text-shadow: 0 1px 0 rgba(255,255,255,.7); }
+.key:hover { background: linear-gradient(180deg, #ffffff 0%, #eceef1 40%, #cbcfd5 100%); }
+.key:active, .key.down { transform: translateY(4px); box-shadow: 0 1px 0 #6a6e75, 0 2px 4px rgba(0,0,0,.5), inset 0 1px 0 #fff, inset 0 2px 4px rgba(0,0,0,.18); }
+.key:disabled { opacity: .45; cursor: default; }
+.key.power { color: #3a1b18; }
+.key.power::before { content: ""; position: absolute; top: 6px; right: 7px; width: 6px; height: 6px; border-radius: 50%; background: #4a1714; box-shadow: inset 0 1px 1px rgba(0,0,0,.6); }
+.key.power.on::before { background: #ff3b2f; box-shadow: 0 0 6px #ff3b2f, 0 0 12px rgba(255,59,47,.7); }
+.key.kept { color: #c2185b; }
+.vol { display: flex; align-items: center; gap: 8px; font: 500 11px Oswald, sans-serif; letter-spacing: .2em; color: #b4b8bf; margin-left: 6px; }
+.vol input { accent-color: #d8dbe0; width: 120px; }
+.hint { text-align: center; color: #9a9ca3; font-size: 13px; margin-top: 12px; min-height: 20px; }
+@media (max-width: 520px) {
+  .wrap { padding: 14px 10px 50px; }
+  .deck { padding: 16px 10px 12px; border-radius: 12px; }
+  .brand .r { display: none; }
+  .vfd .title { font-size: 20px; }
+  .well { padding: 2.6%; }
+  .key { min-width: 0; padding: 12px 11px 10px; }
+}
+/* panels */
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; }
+@media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; min-width: 0; }
+h2 { font-size: 15px; margin: 0 0 10px; }
+.shelf { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.tape { position: relative; text-align: left; font: inherit; color: inherit; cursor: pointer; border: 1px solid var(--line); border-radius: 9px;
+        padding: 10px 12px 10px 18px; min-width: 0; transition: transform .12s, box-shadow .12s;
+        background: linear-gradient(90deg, var(--c1) 0 5px, var(--c2) 5px 9px, transparent 9px), var(--card);
+        box-shadow: 0 1px 0 rgba(255,255,255,.4) inset, 0 2px 6px rgba(0,0,0,.08); }
+.tape:hover { transform: translateY(-2px); box-shadow: 0 1px 0 rgba(255,255,255,.4) inset, 0 8px 18px rgba(0,0,0,.14); }
+.tape.sel { border-color: var(--red); box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 30%, transparent), 0 6px 16px rgba(0,0,0,.12); }
+.tape .mini { position: absolute; top: 10px; right: 10px; width: 58px; height: 37px; border-radius: 5px;
+              background: linear-gradient(180deg, #3a3b40, #1e1f23); box-shadow: inset 0 0 0 1.5px #4a4c52, 0 2px 3px rgba(0,0,0,.3); }
+.tape .mini::before { content: ""; position: absolute; left: 5px; right: 5px; top: 4px; height: 9px; border-radius: 2px;
+                      background: linear-gradient(180deg, var(--c1) 0 50%, var(--c2) 50%); opacity: .9; }
+.tape .mini i { position: absolute; top: 16px; width: 15px; height: 15px; border-radius: 50%;
+                background: radial-gradient(circle, #1a1a1c 0 2.5px, transparent 3px), repeating-conic-gradient(#e8e4da 0 22deg, #9c9584 22deg 60deg);
+                box-shadow: 0 0 0 3px #6b4a30; }
+.tape .mini i:first-child { left: 9px; } .tape .mini i:last-child { right: 9px; }
+.tape.air .mini i { animation: reel 1.6s linear infinite; }
+@keyframes reel { to { transform: rotate(-360deg); } }
+.tape .nm { font-weight: 700; padding-right: 66px; min-height: 38px; } .tape .ds { color: var(--muted); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tape .mt { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); margin-left: 6px; white-space: nowrap; font-weight: 600; }
+.btn { font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
+.btn.primary { background: var(--red); border-color: var(--red); color: #fff; font-weight: 600; }
+.btn.danger { color: var(--red); }
+.hist { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow: auto; }
+.hist li { display: flex; gap: 8px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.hist li .t { flex: 1; min-width: 0; } .hist li .t div:last-child { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+pre.ly { white-space: pre-wrap; font: 13px/1.5 var(--mono); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 300px; overflow: auto; }
+.muted { color: var(--muted); } .small { font-size: 13px; }
+dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); width: min(640px, 94vw); padding: 0; }
+dialog::backdrop { background: rgba(0,0,0,.5); }
+dialog .dh { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+dialog .db { padding: 14px 16px; max-height: 75vh; overflow: auto; }
+label.f { display: block; font-weight: 600; font-size: 14px; margin: 10px 0 5px; } label.f span { font-weight: 400; color: var(--muted); font-size: 13px; }
+input[type=text], textarea, select { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { font: inherit; font-size: 14px; border: 0; padding: 6px 12px; background: transparent; color: var(--text); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--red); color: #fff; }
+.drop { border: 2px dashed var(--line); border-radius: 10px; padding: 18px; text-align: center; color: var(--muted); margin-top: 8px; }
+.drop.over { border-color: var(--red); color: var(--text); }
+.err { color: var(--red); font-size: 14px; }
+.prog { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 6px 0; } .prog i { display: block; height: 100%; background: var(--red); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>∞ b70 RADIO</h1>
+    <span class="muted small">endless AI stations · YuE2</span>
+    <span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <a class="chip" id="lisChip" href="/radio/stream.mp3" target="_blank" style="text-decoration:none" title="Live stream URL — open it in VLC, a phone, or another browser; everyone hears the same broadcast">📡 0 listening</a>
+      <span class="chip" id="gpuChip">…</span>
+      <a href="/" class="chip" style="text-decoration:none">🎵 Studio</a>
+    </span>
+  </header>
+
+  <section class="deck" id="deck">
+    <span class="bolt" style="left:9px;top:9px"></span><span class="bolt" style="right:9px;top:9px"></span><span class="bolt" style="left:9px;bottom:9px"></span><span class="bolt" style="right:9px;bottom:9px"></span>
+    <div class="brand"><b>b70</b> AI-1 Stereo Cassette Deck <span class="r">Endless play · Auto-reverse · YuE2</span></div>
+    <div class="vfd">
+      <div class="l1"><span id="vStation">NO TAPE</span><span id="vMode">STOP</span></div>
+      <div class="title" id="vTitleBox"><span id="vTitle">PICK A STATION · PRESS PLAY</span></div>
+      <div class="l3">
+        <span id="vCounter">00:00 / 00:00</span>
+        <span class="spool" id="vSpool"><span class="dim">SPOOL ▯▯▯▯</span></span>
+        <span id="vGen" class="dim">GEN —</span>
+      </div>
+    </div>
+    <div class="mid">
+      <div class="well" id="cassette">
+        <div class="cassette">
+          <!-- moving parts: tape packs, hubs, tape path (redrawn every frame) -->
+          <svg class="cas" viewBox="0 0 1004 638" aria-hidden="true">
+            <defs>
+              <radialGradient id="ringsL" gradientUnits="userSpaceOnUse" cx="291" cy="276" r="5" spreadMethod="repeat">
+                <stop offset="0" stop-color="#7a4f31"/><stop offset=".5" stop-color="#58361f"/><stop offset="1" stop-color="#7a4f31"/></radialGradient>
+              <radialGradient id="ringsR" gradientUnits="userSpaceOnUse" cx="713" cy="276" r="5" spreadMethod="repeat">
+                <stop offset="0" stop-color="#7a4f31"/><stop offset=".5" stop-color="#58361f"/><stop offset="1" stop-color="#7a4f31"/></radialGradient>
+              <linearGradient id="packSheen" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".38" stop-color="#ffd9b0" stop-opacity=".05"/>
+                <stop offset=".47" stop-color="#ffe2c4" stop-opacity=".2"/><stop offset=".56" stop-color="#ffd9b0" stop-opacity=".04"/><stop offset="1" stop-color="#000" stop-opacity=".25"/></linearGradient>
+              <radialGradient id="hubG" cx=".38" cy=".32" r=".85"><stop offset="0" stop-color="#fdfcf8"/><stop offset=".65" stop-color="#e6e1d5"/><stop offset="1" stop-color="#b9b2a2"/></radialGradient>
+              <radialGradient id="spinG" cx=".35" cy=".3" r=".9"><stop offset="0" stop-color="#f1f3f5"/><stop offset=".55" stop-color="#9ea4ac"/><stop offset="1" stop-color="#555b63"/></radialGradient>
+              <radialGradient id="inG" cx=".5" cy=".42" r=".75"><stop offset="0" stop-color="#2c2d31"/><stop offset="1" stop-color="#0a0a0c"/></radialGradient>
+              <g id="hub">
+                <circle r="62" fill="url(#hubG)" stroke="#9c9584" stroke-width="1.5"/>
+                <circle r="55" fill="none" stroke="rgba(0,0,0,.07)" stroke-width="3"/>
+                <path d="M-7 -62 h14 v11 h-14 z" fill="#8f8877"/>
+                <circle r="39" fill="#0c0c0e"/>
+                <g fill="url(#hubG)" stroke="#a7a090" stroke-width=".8">
+                  <rect x="-4.5" y="-40" width="9" height="12" rx="1.6"/><rect x="-4.5" y="-40" width="9" height="12" rx="1.6" transform="rotate(60)"/>
+                  <rect x="-4.5" y="-40" width="9" height="12" rx="1.6" transform="rotate(120)"/><rect x="-4.5" y="-40" width="9" height="12" rx="1.6" transform="rotate(180)"/>
+                  <rect x="-4.5" y="-40" width="9" height="12" rx="1.6" transform="rotate(240)"/><rect x="-4.5" y="-40" width="9" height="12" rx="1.6" transform="rotate(300)"/></g>
+                <circle r="21" fill="url(#spinG)"/>
+                <g fill="#8a9098"><rect x="-3" y="-28" width="6" height="9" rx="1"/><rect x="-3" y="-28" width="6" height="9" rx="1" transform="rotate(120)"/><rect x="-3" y="-28" width="6" height="9" rx="1" transform="rotate(240)"/></g>
+                <circle r="6" fill="#454b52"/><circle r="2.2" fill="#c9ced4"/>
+              </g>
+            </defs>
+            <rect x="2" y="2" width="1000" height="634" rx="34" fill="url(#inG)"/>
+            <ellipse cx="502" cy="276" rx="330" ry="120" fill="#fff" opacity=".025"/>
+            <path id="tapePath" fill="none" stroke="#7a4f31" stroke-width="3.5" stroke-linejoin="round"/>
+            <circle cx="170" cy="590" r="10" fill="#d8dbdf" stroke="#8d939a" stroke-width="2"/><circle cx="834" cy="590" r="10" fill="#d8dbdf" stroke="#8d939a" stroke-width="2"/>
+            <path d="M452 580 Q502 566 552 580" fill="none" stroke="#b78f55" stroke-width="4"/>
+            <rect x="480" y="582" width="44" height="13" rx="2" fill="#d8ccb2"/>
+            <circle id="packL" cx="291" cy="276" r="150" fill="url(#ringsL)"/><circle id="packLs" cx="291" cy="276" r="150" fill="url(#packSheen)"/>
+            <circle id="packR" cx="713" cy="276" r="90" fill="url(#ringsR)"/><circle id="packRs" cx="713" cy="276" r="90" fill="url(#packSheen)"/>
+            <circle id="packLe" cx="291" cy="276" r="150" fill="none" stroke="#c99a6c" stroke-opacity=".35" stroke-width="2"/><circle id="packRe" cx="713" cy="276" r="90" fill="none" stroke="#c99a6c" stroke-opacity=".35" stroke-width="2"/>
+            <use id="hubL" href="#hub" transform="translate(291 276)"/>
+            <use id="hubR" href="#hub" transform="translate(713 276) rotate(23)"/>
+          </svg>
+          <!-- static shell, label, window glass (cached layer on top) -->
+          <svg class="cas front" id="casFront" viewBox="0 0 1004 638" aria-hidden="true" style="--b1:#f2a03d;--b2:#e9663a;--b3:#cf3f4f;--b4:#7d3b78">
+            <defs>
+              <linearGradient id="shellG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#34353a"/><stop offset=".5" stop-color="#232428"/><stop offset="1" stop-color="#18191c"/></linearGradient>
+              <linearGradient id="trapG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a3b40"/><stop offset="1" stop-color="#202125"/></linearGradient>
+              <linearGradient id="rimG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7b7e86"/><stop offset=".12" stop-color="#46484e"/><stop offset="1" stop-color="#0d0d0f"/></linearGradient>
+              <linearGradient id="paperG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6f1e2"/><stop offset="1" stop-color="#e9e0c8"/></linearGradient>
+              <linearGradient id="glassG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a3d48" stop-opacity=".22"/><stop offset="1" stop-color="#0d0e12" stop-opacity=".1"/></linearGradient>
+              <linearGradient id="winGloss" x1="0" y1="0" x2="1" y2=".55">
+                <stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".28" stop-color="#fff" stop-opacity="0"/><stop offset=".33" stop-color="#fff" stop-opacity=".2"/>
+                <stop offset=".44" stop-color="#fff" stop-opacity=".07"/><stop offset=".46" stop-color="#fff" stop-opacity="0"/><stop offset=".72" stop-color="#fff" stop-opacity="0"/>
+                <stop offset=".75" stop-color="#fff" stop-opacity=".09"/><stop offset=".8" stop-color="#fff" stop-opacity="0"/></linearGradient>
+              <linearGradient id="shellGloss" x1="0" y1="0" x2=".7" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".11"/><stop offset=".35" stop-color="#fff" stop-opacity=".02"/><stop offset="1" stop-color="#000" stop-opacity=".12"/></linearGradient>
+              <radialGradient id="screwG" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#e3e6ea"/><stop offset=".55" stop-color="#8d929a"/><stop offset="1" stop-color="#3c3f45"/></radialGradient>
+              <filter id="grain" x="0" y="0" width="100%" height="100%">
+                <feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="2" seed="7"/>
+                <feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .09 0"/><feComposite in2="SourceGraphic" operator="in"/></filter>
+              <filter id="paperGrain" x="0" y="0" width="100%" height="100%">
+                <feTurbulence type="fractalNoise" baseFrequency=".6" numOctaves="3" seed="2"/>
+                <feColorMatrix values="0 0 0 0 .35  0 0 0 0 .27  0 0 0 0 .15  0 0 0 .16 0"/><feComposite in2="SourceGraphic" operator="in"/></filter>
+              <filter id="ink"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="1" seed="4" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="1.6"/></filter>
+              <mask id="shellCut"><rect width="1004" height="638" fill="#fff"/>
+                <rect x="196" y="196" width="612" height="160" rx="80" fill="#000"/>
+                <rect x="148" y="572" width="44" height="70" rx="5" fill="#000"/><rect x="812" y="572" width="44" height="70" rx="5" fill="#000"/>
+                <rect x="330" y="590" width="76" height="52" rx="6" fill="#000"/><rect x="598" y="590" width="76" height="52" rx="6" fill="#000"/>
+                <rect x="446" y="566" width="112" height="76" rx="6" fill="#000"/>
+                <circle cx="290" cy="607" r="13" fill="#000"/><circle cx="714" cy="607" r="13" fill="#000"/></mask>
+              <mask id="labelCut"><rect width="1004" height="638" fill="#fff"/><rect x="186" y="186" width="632" height="180" rx="90" fill="#000"/></mask>
+              <clipPath id="shellClip"><rect x="2" y="2" width="1000" height="634" rx="34"/></clipPath>
+              <clipPath id="labelClip"><rect x="64" y="24" width="876" height="424" rx="16"/></clipPath>
+              <g id="screw"><circle r="15" fill="#0b0b0c"/><circle r="12.5" fill="url(#screwG)"/>
+                <path d="M-7 0H7M0 -7V7" stroke="#34373c" stroke-width="3.2" stroke-linecap="round"/><circle r="12.5" fill="none" stroke="rgba(0,0,0,.35)"/></g>
+            </defs>
+            <!-- shell -->
+            <g mask="url(#shellCut)">
+              <rect x="2" y="2" width="1000" height="634" rx="34" fill="url(#shellG)"/>
+              <rect x="2" y="2" width="1000" height="634" rx="34" filter="url(#grain)"/>
+              <path d="M196 468 H808 L848 636 H156 Z" fill="url(#trapG)"/>
+              <path d="M196 468 H808" stroke="rgba(255,255,255,.16)" stroke-width="2"/>
+              <path d="M196 468 L156 636 M808 468 L848 636" stroke="rgba(0,0,0,.5)" stroke-width="2"/>
+              <g stroke="rgba(255,255,255,.07)" stroke-width="3" stroke-linecap="round">
+                <path d="M62 492v100M74 492v100M86 492v100M98 492v100M110 492v100M122 492v100"/>
+                <path d="M882 492v100M894 492v100M906 492v100M918 492v100M930 492v100M942 492v100"/></g>
+              <g stroke="rgba(0,0,0,.45)" stroke-width="2" stroke-linecap="round">
+                <path d="M64 494v100M76 494v100M88 494v100M100 494v100M112 494v100M124 494v100"/>
+                <path d="M884 494v100M896 494v100M908 494v100M920 494v100M932 494v100M944 494v100"/></g>
+              <rect x="4" y="4" width="996" height="630" rx="32" fill="none" stroke="url(#rimG)" stroke-width="4"/>
+              <text x="502" y="626" text-anchor="middle" font-family="Oswald, sans-serif" font-size="13" letter-spacing="6" fill="rgba(255,255,255,.22)">b70 · AI TAPE</text>
+            </g>
+            <!-- holes' inner walls -->
+            <g fill="none" stroke="rgba(0,0,0,.7)" stroke-width="3">
+              <rect x="148" y="572" width="44" height="70" rx="5"/><rect x="812" y="572" width="44" height="70" rx="5"/>
+              <rect x="330" y="590" width="76" height="52" rx="6"/><rect x="598" y="590" width="76" height="52" rx="6"/><rect x="446" y="566" width="112" height="76" rx="6"/>
+              <circle cx="290" cy="607" r="13"/><circle cx="714" cy="607" r="13"/></g>
+            <!-- paper label -->
+            <g mask="url(#labelCut)">
+              <g clip-path="url(#labelClip)">
+                <rect x="64" y="24" width="876" height="424" fill="url(#paperG)"/>
+                <rect x="64" y="24" width="876" height="424" filter="url(#paperGrain)"/>
+                <rect x="64" y="190" width="876" height="44" fill="var(--b1)"/><rect x="64" y="234" width="876" height="42" fill="var(--b2)"/>
+                <rect x="64" y="276" width="876" height="42" fill="var(--b3)"/><rect x="64" y="318" width="876" height="46" fill="var(--b4)"/>
+                <path d="M64 233h876M64 275h876M64 317h876" stroke="rgba(255,255,255,.55)" stroke-width="2"/>
+                <rect x="64" y="186" width="876" height="4" fill="#2a2620" opacity=".75"/><rect x="64" y="364" width="876" height="4" fill="#2a2620" opacity=".75"/>
+                <rect x="86" y="40" width="74" height="74" rx="10" fill="none" stroke="#2a2620" stroke-width="4"/>
+                <text id="cSide" x="123" y="101" text-anchor="middle" font-family="Oswald, sans-serif" font-weight="600" font-size="60" fill="#2a2620">A</text>
+                <text x="912" y="58" text-anchor="end" font-family="Oswald, sans-serif" font-weight="600" font-size="22" letter-spacing="3" fill="#2a2620">∞ b70</text>
+                <text x="912" y="80" text-anchor="end" font-family="Oswald, sans-serif" font-size="12" letter-spacing="4" fill="#6a6252">C-90 · HIGH POSITION</text>
+                <path d="M182 100H700M182 174H912" stroke="#7e8db0" stroke-opacity=".45" stroke-width="2"/>
+                <text id="cStation" class="marker" x="186" y="90" font-size="28" fill="#b3261e" filter="url(#ink)">b70 radio</text>
+                <text id="cTitle" class="marker" x="186" y="162" font-size="44" fill="#1f2d62" filter="url(#ink)">insert tape</text>
+                <text x="88" y="404" font-family="Oswald, sans-serif" font-size="14" letter-spacing="5" fill="#2a2620" id="cSideTxt">SIDE A · 45 MIN</text>
+                <text x="88" y="430" font-family="Oswald, sans-serif" font-size="11" letter-spacing="4" fill="#6a6252">48 kHz STEREO · NOISE-FREE · YuE2</text>
+                <text x="916" y="420" text-anchor="end" font-family="Oswald, sans-serif" font-size="26" letter-spacing="2" fill="#2a2620" id="cDir">▶▶</text>
+              </g>
+              <rect x="64" y="24" width="876" height="424" rx="16" fill="none" stroke="rgba(0,0,0,.18)" stroke-width="2"/>
+            </g>
+            <!-- window: smoked plastic with printed scale -->
+            <rect x="196" y="196" width="612" height="160" rx="80" fill="url(#glassG)"/>
+            <g stroke="rgba(255,255,255,.55)" stroke-width="2">
+              <path d="M392 334v8M408 336v6M424 336v6M440 336v6M456 334v8M472 336v6M488 336v6M504 336v6M520 334v8M536 336v6M552 336v6M568 336v6M584 334v8M600 336v6M616 336v6"/></g>
+            <g font-family="Oswald, sans-serif" font-size="11" fill="rgba(255,255,255,.6)" text-anchor="middle"><text x="392" y="328">0</text><text x="456" y="328">10</text><text x="520" y="328">20</text><text x="584" y="328">30</text></g>
+            <rect x="196" y="196" width="612" height="160" rx="80" fill="url(#winGloss)"/>
+            <rect x="196" y="196" width="612" height="160" rx="80" fill="none" stroke="#08080a" stroke-width="5"/>
+            <rect x="201" y="201" width="602" height="150" rx="75" fill="none" stroke="rgba(255,255,255,.14)" stroke-width="2"/>
+            <!-- screws + overall gloss -->
+            <use href="#screw" transform="translate(34 34) rotate(18)"/><use href="#screw" transform="translate(970 34) rotate(-31)"/>
+            <use href="#screw" transform="translate(34 604) rotate(52)"/><use href="#screw" transform="translate(970 604) rotate(7)"/>
+            <use href="#screw" transform="translate(502 512) rotate(-12)"/>
+            <rect x="2" y="2" width="1000" height="634" rx="34" fill="url(#shellGloss)" clip-path="url(#shellClip)" pointer-events="none"/>
+          </svg>
+        </div>
+        <div class="door"><span class="eject">◀ PUSH EJECT</span></div>
+      </div>
+      <div class="vus"><div class="vu"><canvas id="vuL"></canvas><span class="ch">L</span></div><div class="vu"><canvas id="vuR"></canvas><span class="ch">R</span></div></div>
+    </div>
+    <div class="transport">
+      <button class="key power" id="kPower" title="Radio on/off (on = generate songs; pauses the LLM)">⏻ POWER</button>
+      <button class="key" id="kPlay" title="Play / pause">▶ PLAY</button>
+      <button class="key" id="kSkip" title="Skip this song">⏭ SKIP</button>
+      <button class="key" id="kKeep" title="Keep — more like this">♥ KEEP</button>
+      <button class="key" id="kDislike" title="Dislike — less like this, skip">✕ NOPE</button>
+      <span class="vol">VOL <input type="range" id="vol" min="0" max="1" step="0.01" value="0.85" aria-label="Volume"></span>
+    </div>
+    <div class="hint" id="hint">Pick a station tape below, then press PLAY.</div>
+    <audio id="audio" preload="auto" crossorigin="anonymous"></audio>
+  </section>
+
+  <div class="cols">
+    <section class="panel">
+      <h2>Stations <button class="btn" id="newStation" style="float:right">+ New station</button></h2>
+      <div class="shelf" id="shelf"></div>
+    </section>
+    <section class="panel">
+      <h2>Now playing</h2>
+      <div id="now" class="muted small">Nothing yet.</div>
+      <h2 style="margin-top:14px">History</h2>
+      <ul class="hist" id="hist"><li class="muted">—</li></ul>
+    </section>
+  </div>
+</div>
+
+<dialog id="dlg"><div class="dh"><strong id="dlgT">New station</strong><button class="btn" id="dlgX">Close</button></div><div class="db" id="dlgB"></div></dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const mmss = (s) => { s = Math.max(0, Math.round(s || 0)); return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; };
+const api = async (path, opts = {}) => { const r = await fetch(path, opts); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j; };
+const post = (path, body) => api(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+const store = { get(k, d) { try { const v = localStorage.getItem("radio." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+                set(k, v) { try { localStorage.setItem("radio." + k, JSON.stringify(v)); } catch {} } };
+
+let R = null, current = null, wantPlay = false, waiting = false, actx = null, analysers = null;
+let selected = store.get("station", null);
+const audio = $("audio");
+audio.volume = store.get("vol", 0.85); $("vol").value = audio.volume;
+
+// ---------------- audio graph + VU meters
+function ensureAudioGraph() {
+  if (actx) return;
+  try {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = actx.createMediaElementSource(audio), split = actx.createChannelSplitter(2);
+    analysers = [actx.createAnalyser(), actx.createAnalyser()];
+    analysers.forEach(a => { a.fftSize = 1024; a.smoothingTimeConstant = 0.6; });
+    src.connect(split); split.connect(analysers[0], 0); split.connect(analysers[1], 1); src.connect(actx.destination);
+  } catch (e) { console.warn("no Web Audio", e); }
+}
+const needle = [0, 0], peakHold = [0, 0];
+// VU scale is linear in voltage: -20 dB at the left stop, 0 dB at ~70 %, +3 dB at the right stop
+const vuPos = (db) => (Math.pow(10, db / 20) - 0.1) / (Math.pow(10, 3 / 20) - 0.1);
+function drawVU(canvas, value, peak, chName) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1), cw = Math.round(canvas.clientWidth * dpr), chh = Math.round(canvas.clientHeight * dpr);
+  if (!cw || !chh) return;
+  if (canvas.width !== cw || canvas.height !== chh) { canvas.width = cw; canvas.height = chh; }
+  const c = canvas.getContext("2d"), w = cw, h = chh, u = h / 180, cx = w / 2, cy = h * 1.04, r = h * 0.70;
+  const face = c.createRadialGradient(cx, h * 0.62, h * 0.05, cx, h * 0.62, w * 0.72);
+  face.addColorStop(0, "#fff7dc"); face.addColorStop(0.55, "#f5e1a6"); face.addColorStop(1, "#c79d4f");
+  c.fillStyle = face; c.fillRect(0, 0, w, h);
+  const ang = (v) => Math.PI * (1.25 + 0.5 * v);
+  const P = (v, rr) => [cx + Math.cos(ang(v)) * rr, cy + Math.sin(ang(v)) * rr];
+  c.lineCap = "butt";
+  c.strokeStyle = "#2b2418"; c.lineWidth = 2 * u; c.beginPath(); c.arc(cx, cy, r, ang(0), ang(vuPos(0))); c.stroke();
+  c.strokeStyle = "#c62a1f"; c.lineWidth = 7 * u; c.beginPath(); c.arc(cx, cy, r + 2.5 * u, ang(vuPos(0)), ang(1)); c.stroke();
+  c.strokeStyle = "#2b2418"; c.lineWidth = 1.2 * u; c.beginPath(); c.arc(cx, cy, r - 16 * u, ang(0), ang(1)); c.stroke();
+  for (let db = -20; db <= 3; db += 1) {                     // minor ticks
+    const v = vuPos(db); if (v < 0) continue;
+    const [x1, y1] = P(v, r), [x2, y2] = P(v, r - 7 * u);
+    c.strokeStyle = db >= 0 ? "#c62a1f" : "#2b2418"; c.lineWidth = 1.3 * u; c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
+  }
+  c.textAlign = "center"; c.textBaseline = "middle"; c.font = `600 ${13 * u}px Oswald, system-ui, sans-serif`;
+  for (const db of [-20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3]) {
+    const v = vuPos(db), [x1, y1] = P(v, r), [x2, y2] = P(v, r - 14 * u), [tx, ty] = P(v, r + 17 * u);
+    c.strokeStyle = c.fillStyle = db >= 0 ? "#c62a1f" : "#2b2418"; c.lineWidth = 2.2 * u;
+    c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
+    c.fillText(String(Math.abs(db)), tx, ty);
+  }
+  c.fillStyle = "#2b2418"; c.font = `700 ${12 * u}px Oswald, sans-serif`; { const [x, y] = P(-0.04, r + 17 * u); c.fillText("−", x - 8 * u, y); }
+  c.fillStyle = "#c62a1f"; { const [x, y] = P(1.03, r + 17 * u); c.fillText("+", x + 8 * u, y); }
+  c.fillStyle = "#2b2418"; c.font = `italic 700 ${30 * u}px Georgia, serif`; c.fillText("VU", cx, h * 0.64);
+  c.font = `500 ${10 * u}px Oswald, sans-serif`; c.fillStyle = "#6b5a36"; c.fillText("b70 · " + chName, cx, h * 0.77);
+  // needle (with a soft shadow on the dial)
+  const a = ang(Math.max(-0.03, Math.min(1.04, value))), tipR = r + 6 * u, baseR = 22 * u;
+  const nx = (rr) => cx + Math.cos(a) * rr, ny = (rr) => cy + Math.sin(a) * rr;
+  c.lineCap = "round";
+  c.strokeStyle = "rgba(60,40,10,.22)"; c.lineWidth = 2.6 * u; c.beginPath(); c.moveTo(nx(baseR) + 4 * u, ny(baseR) + 5 * u); c.lineTo(nx(tipR) + 4 * u, ny(tipR) + 5 * u); c.stroke();
+  c.strokeStyle = "#141414"; c.lineWidth = 2 * u; c.beginPath(); c.moveTo(nx(baseR), ny(baseR)); c.lineTo(nx(tipR), ny(tipR)); c.stroke();
+  c.strokeStyle = "#c62a1f"; c.lineWidth = 2 * u; c.beginPath(); c.moveTo(nx(tipR - 16 * u), ny(tipR - 16 * u)); c.lineTo(nx(tipR), ny(tipR)); c.stroke();
+  // pivot housing
+  const hg = c.createLinearGradient(0, h - 26 * u, 0, h); hg.addColorStop(0, "#3a3b40"); hg.addColorStop(1, "#141518");
+  c.fillStyle = hg; c.beginPath(); c.ellipse(cx, h + 4 * u, 46 * u, 30 * u, 0, Math.PI, 0); c.fill();
+  // peak LED
+  const hot = peak > vuPos(1);
+  c.fillStyle = hot ? "#ff4031" : "#5b1f19"; c.shadowColor = hot ? "#ff4031" : "transparent"; c.shadowBlur = hot ? 12 * u : 0;
+  c.beginPath(); c.arc(w - 16 * u, 16 * u, 5 * u, 0, 7); c.fill(); c.shadowBlur = 0;
+  c.fillStyle = "#6b5a36"; c.font = `600 ${8 * u}px Oswald, sans-serif`; c.fillText("PEAK", w - 16 * u, 30 * u);
+}
+const buf = new Float32Array(1024);
+// ---------------- tape transport: packs + hubs, real 4.76 cm/s tape speed
+const TAPE = {L: [291, 276], R: [713, 276], hub: 62, max: 184, guideL: [170, 590, 10], guideR: [834, 590, 10], v: 214, side: 2700};
+let tapeP = 0.3, tapeSide = "A", angL = 0, angR = 23, lastFrame = performance.now(), shownSide = "";
+function extTangent(ax, ay, ra, bx, by, rb, left) {
+  const dx = bx - ax, dy = by - ay, D = Math.hypot(dx, dy), th = Math.atan2(dy, dx), ph = Math.acos(Math.max(-1, Math.min(1, (ra - rb) / D)));
+  const o = [th + ph, th - ph].map(t => ({p1: [ax + ra * Math.cos(t), ay + ra * Math.sin(t)], p2: [bx + rb * Math.cos(t), by + rb * Math.sin(t)]}));
+  return o.sort((m, n) => left ? m.p1[0] - n.p1[0] : n.p1[0] - m.p1[0])[0];
+}
+function tapeFrame(now) {
+  const dt = Math.min(0.1, (now - lastFrame) / 1000); lastFrame = now;
+  const pos = streamPos();
+  if (pos != null) { tapeSide = Math.floor(pos / TAPE.side) % 2 ? "B" : "A"; tapeP = (pos % TAPE.side) / TAPE.side; }
+  const span = TAPE.max ** 2 - TAPE.hub ** 2;
+  const supply = Math.sqrt(TAPE.max ** 2 - tapeP * span), takeup = Math.sqrt(TAPE.hub ** 2 + tapeP * span);
+  const rL = tapeSide === "A" ? supply : takeup, rR = tapeSide === "A" ? takeup : supply;
+  if (lid && !audio.paused && current) {                    // angular speed = tape speed / pack radius
+    const dir = tapeSide === "A" ? -1 : 1;
+    angL += dir * TAPE.v / rL * dt * 57.2958; angR += dir * TAPE.v / rR * dt * 57.2958;
+  }
+  for (const [id, r] of [["packL", rL], ["packLs", rL], ["packLe", rL], ["packR", rR], ["packRs", rR], ["packRe", rR]]) $(id).setAttribute("r", r.toFixed(1));
+  $("hubL").setAttribute("transform", `translate(291 276) rotate(${(angL % 360).toFixed(2)})`);
+  $("hubR").setAttribute("transform", `translate(713 276) rotate(${(angR % 360).toFixed(2)})`);
+  const [gl, gr] = [TAPE.guideL, TAPE.guideR];
+  const tl = extTangent(TAPE.L[0], TAPE.L[1], rL, gl[0], gl[1], gl[2], true), tr = extTangent(TAPE.R[0], TAPE.R[1], rR, gr[0], gr[1], gr[2], false);
+  const f = (q) => q.map(x => x.toFixed(1)).join(" ");
+  $("tapePath").setAttribute("d", `M${f(tl.p1)} L${f(tl.p2)} A${gl[2]} ${gl[2]} 0 0 0 ${gl[0]} ${gl[1] + gl[2]} L${gr[0]} ${gr[1] + gr[2]} A${gr[2]} ${gr[2]} 0 0 0 ${f(tr.p2)} L${f(tr.p1)}`);
+  if (shownSide !== tapeSide) {
+    shownSide = tapeSide; $("cSide").textContent = tapeSide; $("cSideTxt").textContent = `SIDE ${tapeSide} · 45 MIN`; $("cDir").textContent = tapeSide === "A" ? "▶▶" : "◀◀";
+  }
+}
+function fitLabel(id, text, max) {
+  const el = $(id); el.textContent = text; el.removeAttribute("textLength"); el.removeAttribute("lengthAdjust");
+  try { if (el.getComputedTextLength() > max) { el.setAttribute("textLength", max); el.setAttribute("lengthAdjust", "spacingAndGlyphs"); } } catch {}
+}
+let labelStation = "b70 radio", labelTitle = "insert tape";
+function setLabels(station, title) {
+  if (station != null) labelStation = station; if (title != null) labelTitle = title;
+  fitLabel("cStation", labelStation, 500); fitLabel("cTitle", labelTitle, 720);
+}
+if (document.fonts) document.fonts.ready.then(() => setLabels());
+function hueOf(st) { let h = 0; for (const ch of (st ? st.id + st.name : "b70")) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; }
+function stationColors(st) {
+  const h = hueOf(st);
+  const el = $("casFront");
+  [[0, 88, 60], [16, 82, 54], [32, 72, 46], [52, 52, 34]].forEach(([dh, sat, l], i) => el.style.setProperty(`--b${i + 1}`, `hsl(${(h + dh) % 360} ${sat}% ${l}%)`));
+}
+function vuLoop(now) {
+  for (let ch = 0; ch < 2; ch++) {
+    let level = -0.03;
+    if (analysers && !audio.paused) {
+      analysers[ch].getFloatTimeDomainData(buf);
+      let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      const dbfs = 20 * Math.log10(Math.sqrt(sum / buf.length) + 1e-6);
+      level = vuPos(Math.max(-22, Math.min(4, dbfs + 16)));   // -16 dBFS RMS reads 0 VU (YuE2 masters sit ~-18)
+    }
+    needle[ch] += (level - needle[ch]) * (level > needle[ch] ? 0.22 : 0.1);    // VU ballistics (~300 ms)
+    peakHold[ch] = Math.max(level, peakHold[ch] * 0.96);
+    drawVU($(ch ? "vuR" : "vuL"), needle[ch], peakHold[ch], ch ? "R" : "L");
+  }
+  syncNow();
+  tapeFrame(now || performance.now());
+  const pos = streamPos(), dur = current ? (current.duration || current.seconds || 0) : 0;
+  const el = current && pos != null ? Math.max(0, pos - current.start_pos) : 0;
+  $("vCounter").textContent = current ? `${mmss(el)} / ${mmss(dur)}` : "00:00 / 00:00";
+  requestAnimationFrame(vuLoop);
+}
+// ---------------- playback: one shared live broadcast — every client hears the same song
+let lid = null, shownId = undefined, prevOn = null;
+function streamPos() { return R && R.stream && lid && R.stream.p0 != null ? R.stream.p0 + audio.currentTime : null; }
+function hearing() {                       // the aired entry audible on THIS client (it lags the server by its buffer)
+  const s = R && R.stream; if (!s) return null;
+  const pos = streamPos(); if (pos == null) return lid ? s.now : null;
+  let e = null; for (const a of s.aired) if (a.start_pos <= pos + 0.05) e = a;
+  return e && e.id ? e : null;
+}
+function connect() {
+  lid = Math.random().toString(36).slice(2, 12);
+  audio.src = `/radio/stream.mp3?l=${lid}`;
+  audio.play().catch(e => hint("Press PLAY to start audio (" + e.message + ")"));
+  setTimeout(refresh, 400);
+}
+function disconnect() { lid = null; audio.pause(); audio.removeAttribute("src"); audio.load(); setPlayingUI(); }
+function setPlayingUI() {
+  const playing = !!lid && !audio.paused, h = hearing();
+  $("cassette").classList.toggle("playing", playing && !!h);
+  $("kPlay").textContent = lid ? "⏸ PAUSE" : "▶ PLAY";
+  $("vMode").textContent = !lid ? "STOP" : !playing ? "TUNING…" : h ? "ON AIR ▶" : "DEAD AIR";
+}
+function syncNow() {
+  const h = hearing(), id = h ? h.id : null;
+  if (id !== shownId) { shownId = id; showTrack(h ? {...h} : null); if (h) loadHistory(); }
+  if (lid && !h && R) hint(R.on ? firstWaitHint(9) : "The radio is off — press POWER or PLAY.");
+}
+function showTrack(t) {
+  current = t;
+  $("vTitle").textContent = t ? t.title.toUpperCase() : lid ? "— DEAD AIR · NEXT SONG ON THE WAY —" : "PICK A STATION · PRESS PLAY";
+  const box = $("vTitleBox"); box.classList.remove("scroll");
+  box.classList.toggle("scroll", $("vTitle").offsetWidth > box.clientWidth);      // marquee only when it doesn't fit
+  setLabels(null, t ? t.title : (lid ? "next song on the way…" : "insert tape"));
+  $("kKeep").classList.toggle("kept", !!t && t.feedback === "keep");
+  if (t) hint("");
+  if (!t) { $("now").innerHTML = "Nothing yet."; return; }
+  const sc = t.critic ? ` · critic ${t.critic.score.toFixed(3)}` : "";
+  $("now").innerHTML = `<div><strong>${esc(t.title)}</strong> <span class="muted small">${mmss(t.seconds)}${sc}</span></div>
+    <div class="muted small" style="margin:4px 0 8px">${esc(t.style)}</div>
+    ${t.lyrics ? `<details><summary class="small">Lyrics</summary><pre class="ly">${esc(t.lyrics)}</pre></details>` : `<div class="small muted">Instrumental</div>`}
+    <div style="margin-top:8px"><a class="btn" href="${t.audio}?download=1" style="text-decoration:none">⬇ MP3</a></div>`;
+}
+function firstWaitHint(n) {
+  const st = R && R.stations.find(s => s.id === selected), g = R && R.gpu;
+  if (g && g.owner === "switching") return `Taking the GPUs from the LLM: ${g.detail}`;
+  if (st && st.kind === "folder" && st.analysis.status !== "done") return "This station is still learning its songs — analysis must finish first.";
+  if (st && st.problem) return "Generation paused: " + st.problem;
+  const making = R ? R.making.filter(m => m.station === selected) : [];
+  const run = making.find(m => m.status === "running");
+  if (run) return `Recording "${run.title}" — ${run.stage || ""}${run.progress && run.progress.music_seconds ? ` (${mmss(run.progress.music_seconds)} of music so far)` : ""}`;
+  if (R && R.judging) return "The critic is listening to a fresh take…";
+  return n < 3 ? "Writing the first song for this station…" : "Winding the tape — the first song of a session takes ~1–2 minutes.";
+}
+function hint(t) { t = t || ""; if ($("hint").textContent !== t) $("hint").textContent = t; }
+audio.addEventListener("play", setPlayingUI); audio.addEventListener("pause", setPlayingUI);
+const reconnect = () => { if (wantPlay && lid) { hint("Stream dropped — reconnecting…"); setTimeout(() => { if (wantPlay) connect(); }, 2000); } };
+audio.addEventListener("error", () => { if (audio.getAttribute("src")) reconnect(); });
+audio.addEventListener("ended", reconnect);
+$("kPlay").onclick = async () => {
+  ensureAudioGraph(); if (actx && actx.state === "suspended") await actx.resume();
+  if (lid) { wantPlay = false; disconnect(); return; }
+  if (!selected) return hint("Pick a station first.");
+  wantPlay = true;
+  if (!R || !R.on || R.station !== selected) {
+    try { await post("/api/radio/power", {on: true, station: selected}); prevOn = true; } catch (e) { wantPlay = false; return hint(e.message); }
+  }
+  connect();
+};
+$("kSkip").onclick = () => { post("/api/radio/skip", {track: current ? current.id : null}).catch(e => hint(e.message)); hint("Skipping for everyone listening…"); };
+$("kDislike").onclick = () => { post("/api/radio/skip", {track: current ? current.id : null, kind: "dislike"}).catch(e => hint(e.message)); hint("Noted — less like this. Skipping…"); };
+$("kKeep").onclick = async () => {
+  if (!current) return;
+  const kind = current.feedback === "keep" ? "clear" : "keep";
+  await post("/api/radio/feedback", {track: current.id, kind}).catch(e => hint(e.message));
+  current.feedback = kind === "keep" ? "keep" : null; $("kKeep").classList.toggle("kept", kind === "keep"); hint(kind === "keep" ? "Kept — the station will lean this way." : "");
+  loadHistory();
+};
+$("kPower").onclick = async () => {
+  const on = !(R && R.on);
+  if (on && !selected) return hint("Pick a station first.");
+  if (!on) { wantPlay = false; disconnect(); }
+  try { await post("/api/radio/power", {on, station: selected}); prevOn = on; hint(on ? "Radio on — generating songs (the LLM is paused while the radio runs). Press PLAY to listen." : "Radio off — the GPUs go back to the LLM once the current takes finish."); }
+  catch (e) { hint(e.message); }
+  refresh();
+};
+$("vol").oninput = () => { audio.volume = +$("vol").value; store.set("vol", audio.volume); };
+// ---------------- stations + state
+function stationCard(s) {
+  const kind = s.kind === "folder" ? "learned" : "text";
+  let meta = `${s.ready} ready · ${s.stats.played} played · ♥ ${s.stats.kept}`;
+  if (s.kind === "folder") {
+    const a = s.analysis || {};
+    meta = a.status === "done" ? `${s.profile ? s.profile.tracks : 0} songs learned · ` + meta
+         : a.status === "running" ? `learning ${a.done}/${a.total} songs…` : `${s.files || 0} songs uploaded · not analyzed yet`;
+  }
+  const desc = s.description || (s.profile ? [...s.profile.top.genre.slice(0, 3), ...s.profile.top.mood.slice(0, 2)].join(", ") : "add songs to teach it");
+  const h = hueOf(s), air = R.on && R.station === s.id;
+  return `<button class="tape ${s.id === selected ? "sel" : ""} ${air ? "air" : ""}" data-st="${esc(s.id)}" style="--c1:hsl(${h} 85% 56%);--c2:hsl(${(h + 32) % 360} 70% 44%)"><span class="mini"><i></i><i></i></span><div class="nm">${esc(s.name)}<span class="badge">${kind}</span>${R.on && R.station === s.id ? '<span class="badge" style="color:var(--red)">ON AIR</span>' : ""}</div>
+    <div class="ds">${esc(desc)}</div><div class="mt">${esc(meta)}</div></button>`;
+}
+let shelfSig = "";
+function renderShelf() {
+  const sig = JSON.stringify(R.stations.map(s => [s.id, s.name, s.ready, s.stats, s.analysis, s.files])) + selected + R.on + R.station;
+  if (sig === shelfSig) return; shelfSig = sig;
+  $("shelf").innerHTML = R.stations.map(stationCard).join("") || `<div class="muted">No stations yet.</div>`;
+}
+function renderDeck() {
+  const st = R.stations.find(s => s.id === selected);
+  $("vStation").textContent = st ? st.name.toUpperCase() : "NO TAPE";
+  if (labelStation !== (st ? st.name : "b70 radio")) { setLabels(st ? st.name : "b70 radio", null); stationColors(st); }
+  $("deck").classList.toggle("lit", !!R.on);
+  $("kPower").classList.toggle("on", R.on);
+  const ready = st ? st.ready : 0, n = Math.min(4, ready);
+  $("vSpool").innerHTML = `SPOOL ${"▮".repeat(n)}<span class="dim">${"▯".repeat(4 - n)}</span> ${ready} READY`;
+  const making = R.making.filter(m => !st || m.station === st.id);
+  $("vGen").className = making.length ? "" : "dim";
+  $("vGen").textContent = making.length ? `REC ${making.filter(m => m.status === "running").length}/${making.length}` : "REC —";
+  if (st && st.problem) { $("vGen").className = ""; $("vGen").textContent = "REC PAUSED"; $("vGen").title = st.problem; } else $("vGen").title = "";
+  const g = R.gpu, ws = g.workers || [], dead = ws.filter(w => w.disabled).length;
+  $("gpuChip").textContent = g.owner === "studio" ? `GPUs: music (${ws.filter(w => w.job).length}/${ws.length - dead} busy${dead ? `, ${dead} card faulted` : ""})` : g.owner === "llm" ? "GPUs: LLM" : g.owner === "switching" ? g.detail : "GPUs: free";
+  setPlayingUI();
+}
+async function refresh() {
+  try {
+    R = await api("/api/radio/state" + (lid ? `?listener=${lid}` : ""));
+    if (R.on && R.station && R.station !== selected) { selected = R.station; store.set("station", selected); loadHistory(); }   // one broadcast: follow its station
+    else if (!selected && R.station) selected = R.station;
+    if (prevOn && !R.on && lid) { wantPlay = false; disconnect(); hint("The radio was switched off."); }
+    prevOn = R.on;
+    const n = R.stream ? R.stream.listeners : 0;
+    $("lisChip").textContent = `📡 ${n} listening`;
+    renderShelf(); renderDeck();
+  } catch (e) { $("gpuChip").textContent = "radio unreachable"; }
+}
+async function loadHistory() {
+  if (!selected) return;
+  const r = await api(`/api/radio/stations/${selected}/history`).catch(() => ({tracks: []}));
+  $("hist").innerHTML = r.tracks.length ? r.tracks.map(t => `<li><span>${t.feedback === "keep" ? "♥" : t.feedback === "dislike" ? "✕" : t.feedback === "skip" ? "⏭" : "♪"}</span>
+    <div class="t"><div>${esc(t.title)}</div><div>${esc(t.style)}</div></div><a class="btn" href="${t.audio}?download=1" title="Download">⬇</a></li>`).join("") : `<li class="muted">Nothing played on this station yet.</li>`;
+}
+$("shelf").onclick = async (e) => {
+  const b = e.target.closest("[data-st]"); if (!b) return;
+  const id = b.dataset.st; if (id === selected) return openStation(id);
+  selected = id; store.set("station", id); shelfSig = ""; renderShelf(); renderDeck(); loadHistory();
+  if (R.on) { await post("/api/radio/power", {on: true, station: id}).catch(e => hint(e.message)); hint("Retuned for everyone — the new station starts once its first song is ready."); refresh(); }
+  else hint("Station selected — press PLAY (click the tape again for details).");
+};
+
+// ---------------- station dialog
+function openDialog(title, html) { $("dlgT").textContent = title; $("dlgB").innerHTML = html; $("dlg").showModal(); }
+$("dlgX").onclick = () => $("dlg").close();
+function openStation(id) {
+  const s = R.stations.find(x => x.id === id); if (!s) return;
+  const p = s.profile;
+  openDialog(s.name, `<p class="small muted">${s.kind === "folder" ? "Learns from its own songs." : "Defined by its description."} Vocals: ${esc(s.vocals)}${s.language ? " · " + esc(s.language) : ""}</p>
+    ${s.description ? `<p>${esc(s.description)}</p>` : ""}
+    ${p ? `<p class="small"><b>Learned:</b> ${esc(p.top.genre.join(", "))}<br><b>Moods:</b> ${esc(p.top.mood.join(", "))}<br><b>Instruments:</b> ${esc(p.top.instrument.join(", "))}<br>
+      <b>Tempo:</b> ${p.bpm_range ? p.bpm_range.join("–") + " BPM" : "?"} · <b>Vocals:</b> ${Math.round(p.vocal_share * 100)}% · ${p.tracks} songs</p>` : ""}
+    <p class="small muted">Generated ${s.stats.generated} · approved ${s.stats.approved} · rejected by the critic ${s.stats.rejected} · played ${s.stats.played} · kept ${s.stats.kept} · disliked ${s.stats.disliked}</p>
+    ${s.kind === "folder" ? folderTools(s) : ""}
+    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn danger" id="delSt">Delete station</button></div>`);
+  $("delSt").onclick = async () => { if (!confirm(`Delete "${s.name}" and its songs?`)) return; await api(`/api/radio/stations/${s.id}`, {method: "DELETE"}); if (selected === s.id) { selected = null; store.set("station", null); } $("dlg").close(); shelfSig = ""; refresh(); };
+  if (s.kind === "folder") wireFolderTools(s);
+}
+function folderTools(s) {
+  return `<div class="drop" id="drop">Drop songs here (mp3, flac, wav, ogg, m4a) or <label style="color:var(--red);cursor:pointer"><input type="file" id="files" multiple accept="audio/*" hidden>choose files</label><div class="small" id="upl">${s.files || 0} songs uploaded</div><div class="prog" hidden id="uplBar"><i style="width:0"></i></div></div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:8px"><button class="btn primary" id="analyze">Learn from these songs</button><span class="small muted" id="anaStat">${s.analysis.status === "done" ? "Learned ✓ — add more songs and learn again anytime." : s.analysis.status === "running" ? `Learning ${s.analysis.done}/${s.analysis.total}…` : ""}</span></div>`;
+}
+function wireFolderTools(s) {
+  const drop = $("drop");
+  const send = async (files) => {
+    const list = [...files].filter(f => /\.(mp3|flac|wav|ogg|m4a|aac|opus)$/i.test(f.name)); if (!list.length) return;
+    $("uplBar").hidden = false; let i = 0;
+    for (const f of list) {
+      $("upl").textContent = `Uploading ${++i}/${list.length}: ${f.name}`;
+      try { await fetch(`/api/radio/stations/${s.id}/files/${encodeURIComponent(f.name)}`, {method: "PUT", body: f}); } catch (e) { $("upl").textContent = e.message; }
+      $("uplBar").firstElementChild.style.width = `${100 * i / list.length}%`;
+    }
+    $("upl").textContent = `Uploaded ${list.length} songs. Press “Learn from these songs”.`; refresh();
+  };
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+  drop.ondragleave = () => drop.classList.remove("over");
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); send(e.dataTransfer.files); };
+  $("files").onchange = () => send($("files").files);
+  $("analyze").onclick = async () => { await post(`/api/radio/stations/${s.id}/analyze`).catch(e => ($("anaStat").textContent = e.message)); $("anaStat").textContent = "Learning… (about a second per song after a short warm-up)"; };
+}
+$("newStation").onclick = () => {
+  openDialog("New station", `<div class="seg" role="group"><button type="button" data-k="text" aria-pressed="true">Describe it</button><button type="button" data-k="folder" aria-pressed="false">Learn from my music</button></div>
+    <label class="f" for="nName">Name</label><input type="text" id="nName" maxlength="60" placeholder="e.g. Sunday Morning Jazz">
+    <label class="f" for="nDesc">Sound <span id="nDescHint">— genres, moods, instruments, era, vocals</span></label>
+    <textarea id="nDesc" rows="3" placeholder="e.g. Warm Sunday-morning jazz: brushed drums, upright bass, piano trio, occasional soft female vocal, coffee-shop calm"></textarea>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div><label class="f" for="nVocals">Vocals</label><select id="nVocals"><option value="mix">Mix of both</option><option value="vocals">Mostly vocals</option><option value="instrumental">Instrumental only</option></select></div>
+    <div><label class="f" for="nLang">Language <span>(vocals)</span></label><select id="nLang"><option value="">Any / from description</option><option>English</option><option>Mandarin</option><option>Japanese</option><option>Korean</option><option>Spanish</option><option>French</option><option>German</option></select></div></div>
+    <p class="small muted" id="nFolderNote" hidden>After creating it, open the station tape to drop in your songs, then press “Learn from these songs”. The radio analyzes tempo, key, energy and sound (CLAP), and its critic keeps the takes that sound most like them.</p>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center"><button class="btn primary" id="nCreate">Create station</button><span class="err" id="nErr"></span></div>`);
+  let kind = "text";
+  document.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { kind = b.dataset.k; document.querySelectorAll("[data-k]").forEach(x => x.setAttribute("aria-pressed", x === b)); $("nFolderNote").hidden = kind !== "folder"; $("nDescHint").textContent = kind === "folder" ? "— optional; your songs define it" : "— genres, moods, instruments, era, vocals"; });
+  $("nCreate").onclick = async () => {
+    try {
+      const r = await post("/api/radio/stations", {kind, name: $("nName").value, description: $("nDesc").value, vocals: $("nVocals").value, language: $("nLang").value});
+      selected = r.station.id; store.set("station", selected); shelfSig = ""; await refresh(); $("dlg").close();
+      if (kind === "folder") openStation(selected); else hint(`“${r.station.name}” is ready — press PLAY.`);
+    } catch (e) { $("nErr").textContent = e.message; }
+  };
+};
+
+stationColors(null); refresh(); loadHistory(); requestAnimationFrame(vuLoop);
+setInterval(refresh, 2500);
+</script>
+</body>
+</html>

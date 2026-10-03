@@ -1,0 +1,3 @@
+# /etc/sudoers.d/yue2-studio  (install with: sudo visudo -f /etc/sudoers.d/yue2-studio)
+# Lets the studio pause and resume the LLM service - and nothing else.
+YOURUSER ALL=(root) NOPASSWD: /usr/bin/systemctl stop vllm.service, /usr/bin/systemctl start vllm.service

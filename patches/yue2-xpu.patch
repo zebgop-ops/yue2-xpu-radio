@@ -1,0 +1,112 @@
+diff --git a/src/yue2/cuda_graph.py b/src/yue2/cuda_graph.py
+index ab0c67d..c4b6da4 100644
+--- a/src/yue2/cuda_graph.py
++++ b/src/yue2/cuda_graph.py
+@@ -63,8 +63,8 @@ class GraphAR:
+         if getattr(model, "_yue2_fp8_originals", None) or any(
+                 not isinstance(module, torch.nn.Linear) or module.weight.dtype != self.dtype for module in linears):
+             raise ValueError("GraphAR only supports unquantized standard AR Linear layers; use eager for FP8")
+-        if capture and self.device.type != "cuda":
+-            raise ValueError("CUDA graphs require a CUDA model; capture=False is for diagnostics")
++        if capture and self.device.type not in {"cuda", "xpu"}:
++            raise ValueError("Device graphs require a CUDA or XPU model; capture=False is for diagnostics")
+         self.prefixes = [[int(token) for token in prefix] for prefix in prefixes]
+         self.max_tokens, self.branches = int(max_tokens), len(prefixes)
+         self.capacity = max(map(len, prefixes)) + self.max_tokens
+@@ -170,19 +170,20 @@ class GraphAR:
+ 
+     @torch.inference_mode()
+     def _capture(self):
+-        with torch.cuda.device(self.device):
+-            current = torch.cuda.current_stream(self.device)
+-            warmup = torch.cuda.Stream(device=self.device)
++        acc = torch.xpu if self.device.type == "xpu" else torch.cuda
++        with acc.device(self.device):
++            current = acc.current_stream(self.device)
++            warmup = acc.Stream(device=self.device)
+             warmup.wait_stream(current)
+-            with torch.cuda.stream(warmup):
++            with acc.stream(warmup):
+                 for _ in range(3):
+                     self.positions.copy_(self.initial_positions)
+                     self._decode()
+                 self.positions.copy_(self.initial_positions)
+             current.wait_stream(warmup)
+-            torch.cuda.synchronize(self.device)
+-            self.graph = torch.cuda.CUDAGraph()
+-            with torch.cuda.graph(self.graph):
++            acc.synchronize(self.device)
++            self.graph = torch.xpu.XPUGraph() if self.device.type == "xpu" else torch.cuda.CUDAGraph()
++            with acc.graph(self.graph):
+                 self.output = self._decode()
+             # Warmup/capture wrote one future slot. The first real step
+             # overwrites that slot in every layer before making it visible.
+diff --git a/src/yue2/pipeline.py b/src/yue2/pipeline.py
+index 5bc2960..f064bdf 100644
+--- a/src/yue2/pipeline.py
++++ b/src/yue2/pipeline.py
+@@ -310,6 +310,8 @@ class YuE2Pipeline:
+         self._model, self._vae = None, None
+         if self.device.type == "cuda":
+             torch.cuda.empty_cache()
++        elif self.device.type == "xpu":
++            torch.xpu.empty_cache()
+ 
+     def __enter__(self):
+         return self
+@@ -320,10 +322,14 @@ class YuE2Pipeline:
+     def decode(self, latents, *, full=False, vae=None):
+         from .modeling_vae import YuE2VAE
+         with self._status("Loading audio decoder"):
+-            if self._model is not None:
++            # 32 GB XPUs hold the AR model and the VAE together; offloading the 7 GB AR model to
++            # host RAM on every song only costs time and RAM (two workers would exhaust a 30 GB host).
++            if self._model is not None and self.device.type != "xpu":
+                 self._model.to("cpu")
+             if self.device.type == "cuda":
+                 torch.cuda.empty_cache()
++            elif self.device.type == "xpu":
++                torch.xpu.empty_cache()
+             if vae is not None:
+                 model = YuE2VAE.from_pretrained(vae, decoder_only=True, device=self.device)
+             else:
+@@ -354,6 +360,8 @@ class YuE2Pipeline:
+             model.to("cpu")
+             if self.device.type == "cuda":
+                 torch.cuda.empty_cache()
++            elif self.device.type == "xpu":
++                torch.xpu.empty_cache()
+ 
+     def effective_config(self, request, abc_sampling=None, semantic_sampling=None):
+         config = self.generation_config.to_dict()
+diff --git a/src/yue2/sampling.py b/src/yue2/sampling.py
+index 9673842..4b611eb 100644
+--- a/src/yue2/sampling.py
++++ b/src/yue2/sampling.py
+@@ -9,6 +9,8 @@ def synchronize(device):
+     device = torch.device(device)
+     if device.type == "cuda":
+         torch.cuda.synchronize(device)
++    elif device.type == "xpu":
++        torch.xpu.synchronize(device)
+     elif device.type == "mps":
+         torch.mps.synchronize()
+ 
+@@ -68,7 +70,7 @@ def generate_tokens(model, prefix, sampling, seed, phase, negative=None, cfg_sca
+     if cancelled is not None and cancelled():
+         raise InterruptedError("Cancelled before prefill")
+     # The two stages deliberately reset their request-local seed, matching the preset.
+-    rng_device = device if device.type in {"cpu", "cuda"} else torch.device("cpu")
++    rng_device = device if device.type in {"cpu", "cuda", "xpu"} else torch.device("cpu")
+     generator = torch.Generator(device=rng_device).manual_seed(seed)
+     config = model.config
+ 
+@@ -83,7 +85,7 @@ def generate_tokens(model, prefix, sampling, seed, phase, negative=None, cfg_sca
+ 
+     graph = None
+     positive_cache = negative_cache = None
+-    graph_enabled = use_cuda_graph and device.type == "cuda" and not getattr(model, "_yue2_fp8_originals", {})
++    graph_enabled = use_cuda_graph and device.type in {"cuda", "xpu"} and not getattr(model, "_yue2_fp8_originals", {})
+     synchronize(device)
+     start = time.perf_counter()
+     try:

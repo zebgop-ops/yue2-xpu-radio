@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>b70 Music Studio</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #fff; --text: #1b1f24; --muted: #5b6573; --line: #e3e6ea; --soft: #f0f2f5;
+  --accent: #6d4fd8; --accent-ink: #fff; --ok: #1f8a4c; --warn: #b7791f; --bad: #c0392b; --off: #8a94a3;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f1115; --panel: #171a20; --text: #e7e9ee; --muted: #9ba3b0; --line: #272c35; --soft: #1e232b;
+          --accent: #9b84ff; --accent-ink: #120d2b; --ok: #3fbf7a; --warn: #e0a84a; --bad: #ef6b5b; --off: #6b7482; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 20px 16px 60px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 18px; }
+h1 { font-size: 24px; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 16px; margin: 0 0 12px; }
+.muted { color: var(--muted); } .small { font-size: 13px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--off); flex: none; }
+.b-studio .dot, .b-done .dot { background: var(--ok); } .b-switching .dot, .b-running .dot, .b-queued .dot { background: var(--warn); }
+.b-llm .dot { background: var(--accent); } .b-failed .dot { background: var(--bad); }
+.layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); align-items: start; }
+@media (max-width: 920px) { .layout { grid-template-columns: 1fr; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; margin-bottom: 14px; }
+.seg button { font: inherit; border: 0; background: transparent; color: var(--text); padding: 7px 14px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+label.f { display: block; font-weight: 600; font-size: 14px; margin: 12px 0 6px; }
+label.f .hint { font-weight: 400; color: var(--muted); font-size: 13px; }
+input[type=text], input[type=number], textarea, select {
+  width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+textarea { resize: vertical; }
+textarea.lyrics { min-height: 190px; font: 14px/1.5 var(--mono); }
+textarea.abc { min-height: 160px; font: 13px/1.45 var(--mono); }
+input:focus, textarea:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 0; border-color: var(--accent); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.chipgroup { margin-top: 6px; }
+.chipgroup > span { font-size: 12px; color: var(--muted); display: inline-block; width: 84px; }
+.chip { font: inherit; font-size: 13px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--soft); color: var(--text); cursor: pointer; }
+.chip:hover { border-color: var(--accent); }
+.chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.row > * { flex: 1 1 140px; }
+.btn { font: inherit; font-weight: 600; border-radius: 9px; padding: 9px 16px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-size: 16px; padding: 11px 22px; }
+.btn.small { font-size: 13px; font-weight: 500; padding: 4px 10px; border-radius: 7px; }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn.danger { color: var(--bad); }
+.linkbtn { font: inherit; font-size: 13px; background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; }
+details.adv { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+details.adv > summary { cursor: pointer; font-weight: 600; font-size: 14px; color: var(--muted); }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 4px 14px; }
+fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px 12px; margin: 12px 0 0; }
+legend { font-size: 13px; font-weight: 600; padding: 0 6px; color: var(--muted); }
+.range { display: flex; align-items: center; gap: 8px; } .range input[type=range] { flex: 1; accent-color: var(--accent); }
+.range output { min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; font-size: 14px; }
+.submitbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 16px; }
+.err { color: var(--bad); font-size: 14px; }
+.job { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; background: var(--panel); }
+.job .top { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.job .title { font-weight: 600; } .job .style { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prog { height: 6px; background: var(--soft); border-radius: 3px; overflow: hidden; margin: 8px 0 4px; }
+.prog > i { display: block; height: 100%; background: var(--accent); transition: width .5s; }
+.prog.indet > i { width: 30%; animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+.job audio { width: 100%; height: 36px; margin-top: 8px; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.toolbar { display: flex; gap: 8px; margin-bottom: 10px; } .toolbar input { flex: 1; }
+.empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
+dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); width: min(760px, 94vw); padding: 0; }
+dialog::backdrop { background: rgba(0,0,0,.45); }
+dialog .dh { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+dialog .db { padding: 14px 16px; max-height: 70vh; overflow: auto; }
+dialog pre { white-space: pre-wrap; font: 13px/1.5 var(--mono); background: var(--soft); padding: 10px; border-radius: 8px; }
+.kvs { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 14px; } .kvs dt { color: var(--muted); } .kvs dd { margin: 0; word-break: break-word; }
+.tips { font-size: 13px; color: var(--muted); margin: 6px 0 0; padding-left: 18px; }
+.writer { border: 1px solid var(--accent); border-radius: 10px; padding: 12px; margin: 8px 0 10px; background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+.writer .grid2 { gap: 2px 12px; }
+.writer pre { white-space: pre-wrap; font: 13px/1.5 var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 340px; overflow: auto; margin: 10px 0 6px; }
+.writer .wbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.btn.accent { border-color: var(--accent); color: var(--accent); }
+.gpubar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🎵 b70 Music Studio</h1>
+    <span class="muted small">YuE2 · lyrics + style → full song with vocals, 48 kHz stereo</span>
+    <a href="/radio" class="btn small" style="text-decoration:none">📻 Radio</a>
+    <span class="gpubar" style="margin-left:auto">
+      <span class="badge" id="gpu"><span class="dot"></span><span>…</span></span>
+      <button class="btn small" id="release" hidden title="Unload YuE2 and restart the LLM (takes ~1.5 min; songs then need ~1 min to take the GPUs again)">Give GPUs back to the LLM</button>
+    </span>
+  </header>
+
+  <div class="layout">
+    <!-- ======================= CREATE ======================= -->
+    <section class="panel" id="create">
+      <div class="seg" role="group" aria-label="What to make">
+        <button type="button" data-mode="song" aria-pressed="true">🎤 Song with vocals</button>
+        <button type="button" data-mode="instrumental" aria-pressed="false">🎹 Instrumental</button>
+      </div>
+
+      <label class="f" for="style">Style <span class="hint">— genre, mood, voice, instruments, language, tempo</span></label>
+      <div class="row" style="margin-bottom:6px">
+        <select id="preset" aria-label="Style presets"><option value="">Start from a preset…</option></select>
+      </div>
+      <textarea id="style" rows="3" placeholder="e.g. English, warm piano pop, expressive female voice, acoustic piano, light drums, 88 BPM"></textarea>
+      <div id="chips"></div>
+      <div class="chipgroup"><span>Tempo</span>
+        <span class="range" style="display:inline-flex;width:calc(100% - 90px)"><input type="range" id="bpm" min="0" max="180" step="2" value="0" aria-label="Tempo"><output id="bpmOut">auto</output></span>
+      </div>
+
+      <div id="lyricsBox">
+        <label class="f" for="lyrics"><span id="lyricsLabel">Lyrics</span> <span class="hint" id="lyricsHint">— use section tags; one line per sung phrase</span></label>
+        <div class="row" id="writerBtns" style="margin:2px 0 6px">
+          <span style="flex:0 0 auto"><button class="btn small accent" type="button" id="openWriter">✨ Write lyrics for me</button>
+          <button class="btn small" type="button" id="polish" title="Keep your words; fix section tags, line breaks and repeated choruses">Polish my lyrics</button></span>
+        </div>
+        <div class="writer" id="writer" hidden>
+          <label class="f" for="idea" style="margin-top:0">What's the song about?</label>
+          <textarea id="idea" rows="2" placeholder="e.g. a summer road trip with old friends, windows down, not wanting it to end"></textarea>
+          <div class="grid2">
+            <div><label class="f small" for="wStructure">Structure</label>
+              <select id="wStructure">
+                <option value="Verse, Chorus, Verse, Chorus, Bridge, Chorus">Verse · Chorus · Verse · Chorus · Bridge · Chorus</option>
+                <option value="Verse, Chorus">Short: Verse · Chorus</option>
+                <option value="Verse, Pre-Chorus, Chorus, Verse, Pre-Chorus, Chorus, Outro">With pre-choruses + outro</option>
+                <option value="Intro, Verse, Chorus, Verse, Chorus, Bridge, Chorus, Outro">Full: intro … outro</option>
+                <option value="custom">Custom…</option>
+              </select>
+              <input type="text" id="wStructureCustom" placeholder="e.g. Verse, Chorus, Verse, Chorus, Chorus" hidden style="margin-top:6px"></div>
+            <div><label class="f small" for="wLength">Length</label>
+              <select id="wLength"><option value="short">Short (~1 min)</option><option value="medium" selected>Medium (~2 min)</option><option value="long">Long (~3–4 min)</option></select></div>
+            <div><label class="f small" for="wRhyme">Rhyme</label>
+              <select id="wRhyme"><option value="rhyming">Rhyming</option><option value="loose">Loose rhymes</option><option value="free">Free verse</option></select></div>
+            <div><label class="f small" for="wPov">Point of view</label>
+              <select id="wPov"><option value="">Any</option><option value="i">I (first person)</option><option value="you">You (to the listener)</option><option value="we">We</option><option value="story">Story (third person)</option></select></div>
+            <div><label class="f small" for="wLang">Language</label>
+              <select id="wLang"><option value="">From the style</option><option>English</option><option>Mandarin</option><option>Cantonese</option><option>Japanese</option><option>Korean</option><option>Spanish</option><option>French</option><option>German</option><option>Italian</option><option>Portuguese</option></select></div>
+            <div><label class="f small" for="wTemp">Creativity</label>
+              <div class="range"><input type="range" id="wTemp" min="0.4" max="1.3" step="0.05" value="0.85"><output id="wTempOut">0.85</output></div></div>
+          </div>
+          <label class="f small" for="wExtra">Anything else? <span class="hint">(optional)</span></label>
+          <input type="text" id="wExtra" placeholder="e.g. mention the ocean, keep it hopeful, a call-and-response chorus">
+          <div class="wbar">
+            <button class="btn primary" type="button" id="wGo" style="font-size:15px;padding:8px 16px">Write lyrics</button>
+            <button class="btn small" type="button" id="wClose">Close</button>
+            <span class="small muted" id="wStatus"></span>
+          </div>
+          <pre id="wPreview" hidden></pre>
+          <div class="wbar" id="wResultBar" hidden>
+            <button class="btn small accent" type="button" id="wUse">Use these lyrics</button>
+            <button class="btn small" type="button" id="wAppend">Add below mine</button>
+            <button class="btn small" type="button" id="wAgain">Try again</button>
+            <input type="text" id="wFeedback" placeholder="Change something… e.g. make the chorus catchier" style="flex:1 1 220px">
+            <button class="btn small" type="button" id="wRewrite">Rewrite</button>
+          </div>
+        </div>
+        <div class="chips" id="tags"></div>
+        <textarea id="lyrics" class="lyrics" placeholder="[Verse]&#10;Neon fades along the lane&#10;Footsteps keep the time of rain&#10;&#10;[Chorus]&#10;Let the day come into view&#10;Every road begins with you"></textarea>
+        <div class="row small muted" style="justify-content:space-between;margin-top:4px">
+          <span id="lyricStats"></span>
+          <span><button class="linkbtn" id="example" type="button">Load example</button> · <button class="linkbtn" id="clearForm" type="button">Clear</button></span>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <div><label class="f" for="title">Title <span class="hint">(optional)</span></label><input type="text" id="title" maxlength="120"></div>
+        <div><label class="f" for="author">Your name <span class="hint">(optional)</span></label><input type="text" id="author" maxlength="60"></div>
+      </div>
+
+      <details class="adv" id="adv">
+        <summary>Advanced options</summary>
+        <div class="grid2">
+          <div><label class="f" for="cot">Planning <span class="hint">how the music is composed</span></label>
+            <select id="cot">
+              <option value="full">Full score — melody + chords (best)</option>
+              <option value="melody">Melody only — free accompaniment</option>
+              <option value="off">No score — straight to audio</option>
+            </select></div>
+          <div><label class="f" for="takes">Takes <span class="hint">different versions</span></label>
+            <select id="takes"><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
+          <div><label class="f" for="seed">Seed <span class="hint">blank = random</span></label>
+            <div class="row"><input type="number" id="seed" min="0" placeholder="random"><button class="btn small" type="button" id="dice" style="flex:0 0 auto" title="Random seed">🎲</button></div></div>
+          <div><label class="f" for="maxlen">Max length</label>
+            <div class="range"><input type="range" id="maxlen" min="20" max="360" step="10" value="360"><output id="maxlenOut">6:00</output></div></div>
+          <div><label class="f" for="cfg">Style adherence <span class="hint">&gt;1 = follow the style text harder, ~2× slower</span></label>
+            <div class="range"><input type="range" id="cfg" min="1" max="3" step="0.1" value="1"><output id="cfgOut">default</output></div></div>
+          <div><label class="f" for="steps">Audio quality steps <span class="hint">32 = default</span></label>
+            <div class="range"><input type="range" id="steps" min="8" max="64" step="8" value="32"><output id="stepsOut">32</output></div></div>
+        </div>
+        <fieldset><legend>Score sampling (composition)</legend><div class="grid2" id="abcSampling"></div></fieldset>
+        <fieldset><legend>Song sampling (performance)</legend><div class="grid2" id="semSampling"></div></fieldset>
+        <label class="f" for="abc">Use your own score (ABC) <span class="hint">— skips composing; edit melody, chords, tempo, form</span></label>
+        <textarea id="abc" class="abc" placeholder="Paste an ABC score here, or use “Edit score” on a song in your library."></textarea>
+        <div class="row small" style="margin-top:4px"><span><input type="file" id="abcFile" accept=".abc,.txt" style="font-size:13px"></span>
+          <span style="text-align:right"><button class="linkbtn" type="button" id="resetAdv">Reset advanced options</button></span></div>
+        <ul class="tips">
+          <li>Default settings are tuned by the model authors and usually sound best — change one thing at a time.</li>
+          <li>Higher temperature = more adventurous; lower = safer and more repetitive.</li>
+          <li>Same seed + same settings = the same song. Takes use seed, seed+1, …</li>
+        </ul>
+      </details>
+
+      <div class="submitbar">
+        <button class="btn primary" id="go" type="button">Create song</button>
+        <span class="muted small" id="eta"></span>
+        <span class="err" id="formErr" role="alert"></span>
+      </div>
+    </section>
+
+    <!-- ======================= QUEUE + LIBRARY ======================= -->
+    <section>
+      <div class="panel" style="margin-bottom:16px">
+        <h2>Now making <span class="muted small" id="qcount"></span></h2>
+        <div id="queue"><div class="empty">Nothing in the queue.</div></div>
+      </div>
+      <div class="panel">
+        <h2>Library <span class="muted small" id="libcount"></span></h2>
+        <div class="toolbar">
+          <input type="text" id="search" placeholder="Search title, style, name…" aria-label="Search library">
+          <select id="filter" aria-label="Filter" style="flex:0 0 150px"><option value="all">All</option><option value="mine">Mine</option><option value="done">Finished</option><option value="failed">Failed / cancelled</option></select>
+        </div>
+        <div id="library"><div class="empty">No songs yet.</div></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<dialog id="dlg"><div class="dh"><strong id="dlgTitle"></strong><button class="btn small" id="dlgClose" type="button">Close</button></div><div class="db" id="dlgBody"></div></dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const mmss = (s) => s == null ? "—" : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+const store = { get(k, d) { try { const v = localStorage.getItem("studio." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+                set(k, v) { try { localStorage.setItem("studio." + k, JSON.stringify(v)); } catch {} } };
+
+const PRESETS = {
+  "Warm piano pop": "English, warm piano pop, expressive female voice, acoustic piano, rounded bass and light drums, lyrical memorable melody, 88 BPM",
+  "Indie folk": "English, indie folk, gentle male voice, fingerpicked acoustic guitar, soft harmonies, warm and intimate, 96 BPM",
+  "80s synthwave": "English, 80s synthwave, dreamy male vocal, analog synth pads, arpeggiated bass, gated drums, nostalgic night drive, 110 BPM",
+  "Rock anthem": "English, arena rock anthem, powerful male vocal, distorted electric guitars, driving bass, big drums, uplifting chorus, 128 BPM",
+  "R&B slow jam": "English, smooth R&B, sultry female vocal, Rhodes piano, deep bass, laid-back groove, 72 BPM",
+  "Lo-fi hip hop": "English, lo-fi hip hop, relaxed rap vocal, dusty piano samples, vinyl crackle, boom-bap drums, chill, 84 BPM",
+  "EDM festival": "English, EDM, energetic female vocal, supersaw synths, four-on-the-floor kick, big build-ups and drops, 126 BPM",
+  "Jazz ballad": "English, jazz ballad, warm crooner male voice, upright bass, brushed drums, piano trio, late-night mood, 70 BPM",
+  "Country": "English, modern country, twangy male vocal, acoustic and electric guitars, pedal steel, heartfelt storytelling, 100 BPM",
+  "Mandarin pop": "Mandarin, C-pop ballad, emotional female vocal, piano and strings, cinematic build, 76 BPM",
+  "K-pop": "Korean, K-pop, bright group vocals, punchy synths, tight drums, catchy hook, 120 BPM",
+  "J-rock": "Japanese, J-rock, energetic male vocal, fast guitars, driving drums, anime opening feel, 150 BPM",
+  "Latin pop": "Spanish, Latin pop, passionate male vocal, reggaeton rhythm, nylon guitar, brass stabs, 96 BPM",
+  "Epic orchestral (instrumental)": "Instrumental, epic orchestral, soaring strings, French horns, timpani, choir pads, cinematic trailer, no vocals",
+  "Calm piano (instrumental)": "Instrumental, warm solo piano, lyrical and gentle, soft dynamics, reading music, no vocals, no singing",
+  "Ambient (instrumental)": "Instrumental, ambient electronic, evolving synth pads, soft textures, slow and spacious, no vocals",
+};
+const CHIPS = {
+  Genre: ["pop", "rock", "indie", "folk", "R&B", "hip hop", "EDM", "jazz", "blues", "country", "metal", "lo-fi", "synthwave", "classical", "cinematic", "reggae", "funk", "soul"],
+  Mood: ["uplifting", "melancholic", "romantic", "energetic", "calm", "dark", "dreamy", "nostalgic", "epic", "playful"],
+  Voice: ["female vocal", "male vocal", "duet", "choir", "rap", "soft breathy voice", "powerful belting voice"],
+  Instruments: ["acoustic piano", "acoustic guitar", "electric guitar", "synth pads", "strings", "brass", "saxophone", "violin", "bass", "drums", "808s", "ukulele"],
+  Language: ["English", "Mandarin", "Cantonese", "Japanese", "Korean", "Spanish", "French", "German", "Italian", "Portuguese"],
+};
+const TAGS = ["[Intro]", "[Verse]", "[Pre-Chorus]", "[Chorus]", "[Bridge]", "[Instrumental]", "[Outro]"];
+const EXAMPLE = "[Verse]\nNeon fades along the lane\nFootsteps keep the time of rain\nFold the night and leave it here\nMorning has a sky to clear\n\n[Chorus]\nLet the day come into view\nEvery road begins with you\nHold a little room for light\nWe will sing beyond the night";
+const EXAMPLE_STRUCTURE = "[Intro]\n\n[Verse]\n\n[Chorus]\n\n[Verse]\n\n[Chorus]\n\n[Outro]";
+const SAMPLING = { abc: {temperature: 0.7, top_p: 0.9, top_k: 30, repetition_penalty: 1.005},
+                   semantic: {temperature: 1.0, top_p: 0.95, top_k: 100, repetition_penalty: 1.2} };
+const SPEC = { temperature: [0, 2, 0.05], top_p: [0.5, 1, 0.01], top_k: [1, 300, 1], repetition_penalty: [1, 2, 0.005] };
+const LABEL = { temperature: "Temperature", top_p: "Top-p", top_k: "Top-k", repetition_penalty: "Repetition penalty" };
+let mode = "song", lastState = null;
+
+// ---------------- form building
+function buildForm() {
+  for (const name of Object.keys(PRESETS)) $("preset").insertAdjacentHTML("beforeend", `<option>${esc(name)}</option>`);
+  $("chips").innerHTML = Object.entries(CHIPS).map(([g, list]) =>
+    `<div class="chipgroup" data-group="${esc(g)}"><span>${esc(g)}</span>${list.map(c => `<button type="button" class="chip" data-chip="${esc(c)}">${esc(c)}</button>`).join(" ")}</div>`).join("");
+  $("tags").innerHTML = TAGS.map(t => `<button type="button" class="chip" data-tag="${esc(t)}">${esc(t)}</button>`).join("");
+  for (const [box, key] of [["abcSampling", "abc"], ["semSampling", "semantic"]])
+    $(box).innerHTML = Object.entries(SAMPLING[key]).map(([k, v]) => {
+      const [lo, hi, st] = SPEC[k];
+      return `<div><label class="f small" for="${key}-${k}" style="margin-top:6px">${LABEL[k]}</label>
+        <div class="range"><input type="range" id="${key}-${k}" data-s="${key}" data-k="${k}" min="${lo}" max="${hi}" step="${st}" value="${v}"><output>${v}</output></div></div>`;
+    }).join("");
+}
+function styleTokens() { return $("style").value.split(",").map(s => s.trim()).filter(Boolean); }
+function syncChips() {
+  const have = new Set(styleTokens().map(s => s.toLowerCase()));
+  document.querySelectorAll("[data-chip]").forEach(b => b.classList.toggle("on", have.has(b.dataset.chip.toLowerCase())));
+  const bpm = (styleTokens().find(t => /^\d{2,3}\s*BPM$/i.test(t)) || "").match(/\d+/);
+  $("bpm").value = bpm ? bpm[0] : 0; $("bpmOut").textContent = bpm ? bpm[0] + " BPM" : "auto";
+}
+function toggleChip(c) {
+  let toks = styleTokens(); const i = toks.findIndex(t => t.toLowerCase() === c.toLowerCase());
+  if (i >= 0) toks.splice(i, 1); else toks.push(c);
+  $("style").value = toks.join(", "); syncChips(); saveForm();
+}
+function setBpm(v) {
+  let toks = styleTokens().filter(t => !/^\d{2,3}\s*BPM$/i.test(t));
+  if (+v > 0) toks.push(`${v} BPM`);
+  $("style").value = toks.join(", "); $("bpmOut").textContent = +v > 0 ? `${v} BPM` : "auto"; saveForm();
+}
+function insertTag(t) {
+  const ta = $("lyrics"), s = ta.selectionStart ?? ta.value.length, before = ta.value.slice(0, s), after = ta.value.slice(s);
+  const pre = before && !before.endsWith("\n\n") ? (before.endsWith("\n") ? "\n" : "\n\n") : "";
+  ta.value = before + pre + t + "\n" + after; ta.focus(); const p = (before + pre + t + "\n").length; ta.setSelectionRange(p, p);
+  lyricStats(); saveForm();
+}
+function lyricStats() {
+  const v = $("lyrics").value, lines = v.split("\n").filter(l => l.trim() && !/^\[.*\]$/.test(l.trim())).length;
+  const secs = (v.match(/^\[[^\]]+\]/gm) || []).length;
+  $("lyricStats").textContent = mode === "song" ? `${lines} sung lines · ${secs} sections` : `${secs} sections`;
+}
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll("[data-mode]").forEach(b => b.setAttribute("aria-pressed", b.dataset.mode === m));
+  $("lyricsLabel").textContent = m === "song" ? "Lyrics" : "Song structure";
+  $("lyricsHint").textContent = m === "song" ? "— use section tags; one line per sung phrase" : "— section tags only (no words); blank = intro, verse, chorus, verse, chorus, outro";
+  $("lyrics").placeholder = m === "song" ? "[Verse]\nNeon fades along the lane\n…\n\n[Chorus]\n…" : EXAMPLE_STRUCTURE;
+  document.querySelector('[data-group="Voice"]').hidden = m !== "song";
+  $("writerBtns").hidden = m !== "song"; if (m !== "song") $("writer").hidden = true;
+  $("go").textContent = m === "song" ? "Create song" : "Create instrumental";
+  if (m === "instrumental" && $("cot").value === "off") $("cot").value = "full";
+  $("cot").querySelector('option[value="off"]').disabled = m === "instrumental";
+  lyricStats(); saveForm(); updateEta();
+}
+const FIELDS = ["style", "lyrics", "title", "author", "cot", "takes", "seed", "maxlen", "cfg", "steps", "abc"];
+function saveForm() {
+  const f = Object.fromEntries(FIELDS.map(k => [k, $(k).value])); f.mode = mode;
+  f.sampling = Object.fromEntries([...document.querySelectorAll("[data-s]")].map(el => [el.id, el.value]));
+  store.set("form", f);
+}
+function loadForm(f) {
+  if (!f) return;
+  for (const k of FIELDS) if (f[k] != null && $(k)) $(k).value = f[k];
+  for (const [id, v] of Object.entries(f.sampling || {})) if ($(id)) { $(id).value = v; $(id).nextElementSibling.textContent = v; }
+  setMode(f.mode || "song"); outputs(); syncChips(); lyricStats();
+}
+function outputs() {
+  $("maxlenOut").textContent = mmss(+$("maxlen").value);
+  $("cfgOut").textContent = +$("cfg").value === 1 ? "default" : (+$("cfg").value).toFixed(1);
+  $("stepsOut").textContent = $("steps").value;
+}
+function resetAdvanced() {
+  $("cot").value = "full"; $("takes").value = "1"; $("seed").value = ""; $("maxlen").value = 360; $("cfg").value = 1; $("steps").value = 32; $("abc").value = "";
+  for (const [key, vals] of Object.entries(SAMPLING)) for (const [k, v] of Object.entries(vals)) { const el = $(`${key}-${k}`); el.value = v; el.nextElementSibling.textContent = v; }
+  outputs(); saveForm(); updateEta();
+}
+function samplingOverrides(key) {
+  const out = {};
+  for (const [k, def] of Object.entries(SAMPLING[key])) { const v = parseFloat($(`${key}-${k}`).value); if (Math.abs(v - def) > 1e-9) out[k] = v; }
+  return out;
+}
+function updateEta() {
+  const takes = +$("takes").value, cfg = +$("cfg").value > 1 ? 1.8 : 1;
+  const per = Math.round((60 + (mode === "instrumental" ? 15 : 0)) * cfg);
+  const q = lastState ? lastState.queue.length : 0;
+  $("eta").textContent = `≈ ${mmss(per * takes)} per ${takes > 1 ? takes + " takes" : "song"}` + (q ? ` · ${q} ahead in the queue` : "") +
+    (lastState && lastState.gpu.owner === "llm" ? " · +1 min to pause the LLM first" : "");
+}
+
+// ---------------- submit
+async function submit() {
+  $("formErr").textContent = "";
+  const body = {
+    mode, style: $("style").value, lyrics: $("lyrics").value, title: $("title").value, author: $("author").value,
+    cot: $("cot").value, takes: +$("takes").value, seed: $("seed").value, max_seconds: +$("maxlen").value,
+    cfg_scale: +$("cfg").value, ode_steps: +$("steps").value, abc: $("abc").value,
+    abc_sampling: samplingOverrides("abc"), semantic_sampling: samplingOverrides("semantic"),
+  };
+  if (!body.style.trim()) return ($("formErr").textContent = "Add a style first — pick a preset or a few chips.");
+  if (mode === "song" && !body.lyrics.trim()) return ($("formErr").textContent = "Add some lyrics (or switch to Instrumental).");
+  $("go").disabled = true;
+  try {
+    const r = await fetch("/api/jobs", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "Something went wrong");
+    const mine = store.get("mine", []); store.set("mine", mine.concat(j.ids).slice(-500));
+    $("formErr").textContent = ""; tick();
+  } catch (e) { $("formErr").textContent = e.message; }
+  finally { $("go").disabled = false; }
+}
+
+// ---------------- rendering
+const STATUS = { queued: "waiting", running: "making", done: "done", failed: "failed", cancelled: "cancelled" };
+function badge(st) { return `<span class="badge b-${esc(st)}"><span class="dot"></span>${esc(STATUS[st] || st)}</span>`; }
+function meta(j) {
+  const bits = [j.mode === "instrumental" ? "instrumental" : null, j.takes > 1 ? `take ${j.take}/${j.takes}` : null,
+                j.seconds ? mmss(j.seconds) : null, j.author ? "by " + j.author : null,
+                new Date((j.finished || j.created) * 1000).toLocaleString([], {dateStyle: "medium", timeStyle: "short"})].filter(Boolean);
+  return bits.map(esc).join(" · ");
+}
+function progressBlock(j) {
+  const p = j.progress || {};
+  if (j.status === "queued") return `<div class="small muted">${esc(j.stage || "Waiting")}</div>`;
+  let pct = null, text = esc(j.stage || "Working…");
+  if (p.phase === "abc") text += ` · ${p.tokens} notes/tokens · ${p.tps} tok/s`;
+  if (p.phase === "semantic") { pct = Math.min(100, 100 * p.music_seconds / Math.max(60, Math.min(p.max_music_seconds, 240))); text += ` · ${mmss(p.music_seconds)} of music so far · ${p.tps} tok/s`; }
+  const el = j.started ? ` · ${mmss(Date.now() / 1000 - j.started)} elapsed` : "";
+  return `<div class="prog ${pct == null ? "indet" : ""}"><i style="width:${pct ?? 30}%"></i></div><div class="small muted">${text}${el}</div>`;
+}
+function renderQueue(st) {
+  const q = st.queue;
+  $("qcount").textContent = q.length ? `(${q.length})` : "";
+  if (!q.length) { $("queue").innerHTML = `<div class="empty">Nothing in the queue.</div>`; return; }
+  $("queue").innerHTML = q.map(j => `<div class="job"><div class="top">${badge(j.status)}<span class="title">${esc(j.title)}</span></div>
+    <div class="style" title="${esc(j.style)}">${esc(j.style)}</div>${progressBlock(j)}
+    <div class="actions"><button class="btn small danger" data-act="cancel" data-id="${esc(j.id)}">Cancel</button></div></div>`).join("");
+}
+let libSig = "";
+function renderLibrary(st) {
+  const mine = new Set(store.get("mine", [])), qtext = $("search").value.trim().toLowerCase(), f = $("filter").value;
+  const items = st.library.filter(j => (f === "all" || (f === "mine" && mine.has(j.id)) || (f === "done" && j.status === "done") || (f === "failed" && j.status !== "done")) &&
+    (!qtext || [j.title, j.style, j.author].join(" ").toLowerCase().includes(qtext)));
+  $("libcount").textContent = `(${st.library.filter(j => j.status === "done").length} songs)`;
+  const sig = items.map(j => j.id + j.status).join("|") + f + qtext;
+  if (sig === libSig) return; libSig = sig;   // don't re-render (keeps audio playing)
+  if (!items.length) { $("library").innerHTML = `<div class="empty">${st.library.length ? "No matches." : "No songs yet — make the first one!"}</div>`; return; }
+  $("library").innerHTML = items.map(j => {
+    const id = esc(j.id), files = new Set(j.files || []);
+    const audio = files.has("song.mp3") || files.has("audio.flac") ? `<audio controls preload="none" src="/files/${id}/${files.has("song.mp3") ? "song.mp3" : "audio.flac"}"></audio>` : "";
+    const err = j.status !== "done" ? `<div class="small" style="color:var(--bad)">${esc(j.error || j.status)}</div>` : "";
+    return `<div class="job"><div class="top">${j.status !== "done" ? badge(j.status) : ""}<span class="title">${esc(j.title)}</span><span class="muted small">${meta(j)}</span></div>
+      <div class="style" title="${esc(j.style)}">${esc(j.style)}</div>${err}${audio}
+      <div class="actions">
+        ${files.has("song.mp3") ? `<a class="btn small" href="/files/${id}/song.mp3?download=1">⬇ MP3</a>` : ""}
+        ${files.has("audio.flac") ? `<a class="btn small" href="/files/${id}/audio.flac?download=1">⬇ FLAC</a>` : ""}
+        <button class="btn small" data-act="details" data-id="${id}">Details</button>
+        <button class="btn small" data-act="reuse" data-id="${id}" title="Load these settings into the form">Reuse</button>
+        <button class="btn small" data-act="take" data-id="${id}" title="Same settings, new seed">New take</button>
+        ${files.has("score.abc") ? `<button class="btn small" data-act="edit" data-id="${id}" title="Edit the melody/chords and render again">Edit score</button>` : ""}
+        <button class="btn small danger" data-act="delete" data-id="${id}">Delete</button>
+      </div></div>`;
+  }).join("");
+}
+function renderGpu(st) {
+  const g = st.gpu, el = $("gpu");
+  const txt = { llm: "GPUs: LLM is running — your first song pauses it (~1 min)", studio: "GPUs: Music Studio — YuE2 ready, the LLM is paused",
+               switching: g.detail || "Switching…", free: "GPUs: free" }[g.owner] || g.owner;
+  el.className = "badge b-" + g.owner;
+  el.innerHTML = `<span class="dot"></span><span>${esc(txt)}${g.owner === "studio" && g.idle_seconds_left != null ? ` · LLM returns automatically in ${mmss(g.idle_seconds_left)}` : ""}</span>`;
+  $("release").hidden = !(g.owner === "studio" && !st.queue.length);
+}
+async function tick() {
+  try {
+    const st = await (await fetch("/api/state", {cache: "no-store"})).json();
+    lastState = st; renderGpu(st); renderQueue(st); renderLibrary(st); updateEta();
+  } catch { $("gpu").innerHTML = `<span class="dot"></span><span>studio unreachable</span>`; }
+}
+
+// ---------------- library actions
+async function getJob(id) { const r = await fetch(`/api/jobs/${id}`); return r.json(); }
+function fillFrom(j, {newSeed = false, abc = null} = {}) {
+  setMode(j.mode || "song");
+  $("style").value = j.style || ""; $("lyrics").value = j.lyrics || ""; $("title").value = j.title || "";
+  $("cot").value = j.cot || "full"; $("seed").value = newSeed ? "" : (j.seed ?? ""); $("maxlen").value = j.max_seconds || 360;
+  $("cfg").value = j.cfg_scale || 1; $("steps").value = j.ode_steps || 32; $("abc").value = abc ?? (j.abc || "");
+  for (const key of ["abc", "semantic"]) for (const [k, v] of Object.entries(SAMPLING[key])) {
+    const val = (j[key + "_sampling"] || {})[k] ?? v; $(`${key}-${k}`).value = val; $(`${key}-${k}`).nextElementSibling.textContent = val; }
+  outputs(); syncChips(); lyricStats(); saveForm();
+  if (abc || j.abc || newSeed === false) $("adv").open = $("adv").open || Boolean(abc || j.abc);
+  $("create").scrollIntoView({behavior: "smooth"});
+}
+function openDialog(title, html) { $("dlgTitle").textContent = title; $("dlgBody").innerHTML = html; $("dlg").showModal(); }
+async function act(kind, id) {
+  if (kind === "cancel") { await fetch(`/api/jobs/${id}/cancel`, {method: "POST"}); return tick(); }
+  if (kind === "delete") { if (!confirm("Delete this song for everyone?")) return; await fetch(`/api/jobs/${id}`, {method: "DELETE"}); libSig = ""; return tick(); }
+  const j = await getJob(id);
+  if (kind === "reuse") return fillFrom(j);
+  if (kind === "take") { fillFrom(j, {newSeed: true}); return submit(); }
+  if (kind === "edit") {
+    openDialog(`Edit score — ${j.title}`, `<p class="small muted">This is the composition the model planned (ABC notation): <code>V: Vocal</code> is the sung melody, <code>V: Ins</code> the lead instrument, quoted symbols like <code>"Am"</code> are chords, <code>Q:1/4=88</code> is the tempo, <code>% verse</code> lines name sections. Change notes, chords, tempo or sections, then render — the new take keeps your lyrics and style.</p>
+      <textarea id="abcEdit" class="abc" style="min-height:320px">${esc(j.score_abc || "")}</textarea>
+      <div class="submitbar"><button class="btn primary" id="renderEdit" type="button">Render edited score</button><button class="btn" id="toForm" type="button">Open in the form instead</button></div>`);
+    $("renderEdit").onclick = () => { fillFrom(j, {abc: $("abcEdit").value}); $("title").value = (j.title || "Untitled") + " (edit)"; $("dlg").close(); submit(); };
+    $("toForm").onclick = () => { fillFrom(j, {abc: $("abcEdit").value}); $("adv").open = true; $("dlg").close(); };
+    return;
+  }
+  if (kind === "details") {
+    const t = j.timing || {}, kv = (k, v) => v == null || v === "" ? "" : `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`;
+    const samp = (s) => Object.keys(s || {}).length ? Object.entries(s).map(([k, v]) => `${k}=${v}`).join(", ") : "defaults";
+    openDialog(j.title, `<dl class="kvs">${kv("Status", STATUS[j.status] || j.status)}${kv("Mode", j.mode)}${kv("Length", mmss(j.seconds))}
+      ${kv("Made in", j.gen_seconds ? mmss(j.gen_seconds) : null)}${kv("Seed", j.seed)}${kv("Planning", j.cot)}${kv("Style adherence", j.cfg_scale || "default")}
+      ${kv("Quality steps", j.ode_steps)}${kv("Score sampling", samp(j.abc_sampling))}${kv("Song sampling", samp(j.semantic_sampling))}
+      ${kv("Score tokens", t.abc ? `${t.abc.output_tokens} @ ${t.abc.output_tps.toFixed(0)} tok/s` : null)}
+      ${kv("Song tokens", t.semantic ? `${t.semantic.output_tokens} @ ${t.semantic.output_tps.toFixed(0)} tok/s` : null)}
+      ${kv("Truncated", j.truncated && (j.truncated.abc || j.truncated.semantic) ? "yes — hit the length limit" : null)}${kv("By", j.author)}${kv("Error", j.error)}</dl>
+      <h3 style="font-size:14px">Style</h3><pre>${esc(j.style)}</pre>
+      <h3 style="font-size:14px">${j.mode === "instrumental" ? "Structure" : "Lyrics"}</h3><pre>${esc(j.lyrics || "(none)")}</pre>
+      ${j.score_abc ? `<h3 style="font-size:14px">Score</h3><pre>${esc(j.score_abc)}</pre>` : ""}
+      <div class="actions">${(j.files || []).includes("score.abc") ? `<a class="btn small" href="/files/${esc(j.id)}/score.abc?download=1">⬇ score.abc</a>` : ""}</div>`);
+  }
+}
+
+
+// ---------------- lyrics writer
+let writerResult = null, writerBusy = false;
+function writerBody(action, extra = {}) {
+  const structure = $("wStructure").value === "custom" ? $("wStructureCustom").value : $("wStructure").value;
+  return Object.assign({ action, style: $("style").value, language: $("wLang").value, idea: $("idea").value, title: $("title").value,
+    structure, length: $("wLength").value, rhyme: $("wRhyme").value, pov: $("wPov").value, extra: $("wExtra").value,
+    temperature: +$("wTemp").value }, extra);
+}
+async function streamLyrics(body, label) {
+  if (writerBusy) return; writerBusy = true;
+  $("writer").hidden = false; $("wPreview").hidden = false; $("wPreview").textContent = ""; $("wResultBar").hidden = true;
+  $("wStatus").textContent = label + "…"; $("wStatus").style.color = "";
+  for (const id of ["wGo", "wAgain", "wRewrite", "polish", "wUse", "wAppend"]) $(id).disabled = true;
+  try {
+    const r = await fetch("/api/lyrics", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || "The lyrics writer is unavailable"); }
+    const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "", source = "";
+    while (true) {
+      const {value, done} = await reader.read(); if (done) break;
+      buf += dec.decode(value, {stream: true});
+      let i; while ((i = buf.indexOf("\n\n")) >= 0) {
+        const line = buf.slice(0, i).trim(); buf = buf.slice(i + 2);
+        if (!line.startsWith("data: ")) continue;
+        const ev = JSON.parse(line.slice(6));
+        if (ev.error) throw new Error(ev.error);
+        if (ev.source) { source = ev.source; $("wStatus").textContent = `${label} with ${source}…`; }
+        if (ev.delta) { $("wPreview").textContent += ev.delta; $("wPreview").scrollTop = $("wPreview").scrollHeight; }
+        if (ev.done) {
+          writerResult = ev;
+          $("wPreview").textContent = (ev.title ? `Title: ${ev.title}\n\n` : "") + ev.lyrics;
+          $("wStatus").textContent = `Written by ${ev.source} in ${ev.seconds}s`;
+          $("wResultBar").hidden = false;
+        }
+      }
+    }
+  } catch (e) { $("wStatus").textContent = e.message; $("wStatus").style.color = "var(--bad)"; }
+  finally { writerBusy = false; for (const id of ["wGo", "wAgain", "wRewrite", "polish", "wUse", "wAppend"]) $(id).disabled = false; }
+}
+function useLyrics(append) {
+  if (!writerResult) return;
+  const cur = $("lyrics").value.trim();
+  $("lyrics").value = append && cur ? cur + "\n\n" + writerResult.lyrics : writerResult.lyrics;
+  if (writerResult.title && (!$("title").value.trim() || !append)) $("title").value = writerResult.title;
+  lyricStats(); saveForm(); $("lyrics").focus();
+}
+$("openWriter").onclick = () => { $("writer").hidden = !$("writer").hidden; if (!$("writer").hidden) $("idea").focus(); };
+$("wClose").onclick = () => { $("writer").hidden = true; };
+$("wStructure").onchange = () => { $("wStructureCustom").hidden = $("wStructure").value !== "custom"; };
+$("wTemp").oninput = () => { $("wTempOut").textContent = (+$("wTemp").value).toFixed(2); };
+$("wGo").onclick = () => streamLyrics(writerBody("write"), "Writing");
+$("wAgain").onclick = () => streamLyrics(writerBody("write"), "Writing another version");
+$("wRewrite").onclick = () => {
+  const base = writerResult ? writerResult.lyrics : $("lyrics").value;
+  if (!base.trim()) return ($("wStatus").textContent = "Nothing to rewrite yet");
+  streamLyrics(writerBody("rewrite", {lyrics: (writerResult && writerResult.title ? `Title: ${writerResult.title}\n\n` : "") + base, feedback: $("wFeedback").value}), "Rewriting");
+};
+$("polish").onclick = () => {
+  if (!$("lyrics").value.trim()) { $("writer").hidden = false; return ($("wStatus").textContent = "Type or paste your lyrics first, then press Polish."); }
+  streamLyrics(writerBody("polish", {lyrics: $("lyrics").value}), "Polishing your lyrics");
+};
+$("wUse").onclick = () => useLyrics(false);
+$("wAppend").onclick = () => useLyrics(true);
+$("idea").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("wGo").click(); });
+
+// ---------------- events
+buildForm();
+document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => setMode(b.dataset.mode));
+$("chips").onclick = (e) => { const c = e.target.closest("[data-chip]"); if (c) toggleChip(c.dataset.chip); };
+$("tags").onclick = (e) => { const t = e.target.closest("[data-tag]"); if (t) insertTag(t.dataset.tag); };
+$("preset").onchange = () => { const p = PRESETS[$("preset").value]; if (p) { $("style").value = p; if (/instrumental/i.test($("preset").value)) setMode("instrumental"); syncChips(); saveForm(); } $("preset").value = ""; };
+$("style").oninput = () => { syncChips(); saveForm(); };
+$("lyrics").oninput = () => { lyricStats(); saveForm(); };
+$("bpm").oninput = () => setBpm($("bpm").value);
+for (const id of ["maxlen", "cfg", "steps"]) $(id).oninput = () => { outputs(); saveForm(); updateEta(); };
+for (const id of ["title", "author", "cot", "takes", "seed", "abc"]) $(id).onchange = () => { saveForm(); updateEta(); };
+document.addEventListener("input", (e) => { if (e.target.dataset && e.target.dataset.s) { e.target.nextElementSibling.textContent = e.target.value; saveForm(); } });
+$("dice").onclick = () => { $("seed").value = Math.floor(Math.random() * 2 ** 31); saveForm(); };
+$("example").onclick = () => { if (mode === "song") { $("lyrics").value = EXAMPLE; if (!$("style").value) $("style").value = PRESETS["Warm piano pop"]; } else { $("lyrics").value = EXAMPLE_STRUCTURE; if (!$("style").value) $("style").value = PRESETS["Calm piano (instrumental)"]; } syncChips(); lyricStats(); saveForm(); };
+$("clearForm").onclick = () => { if (!confirm("Clear style, lyrics and title?")) return; $("style").value = ""; $("lyrics").value = ""; $("title").value = ""; syncChips(); lyricStats(); saveForm(); };
+$("resetAdv").onclick = resetAdvanced;
+$("abcFile").onchange = async () => { const f = $("abcFile").files[0]; if (f) { $("abc").value = await f.text(); saveForm(); } };
+$("go").onclick = submit;
+$("release").onclick = async () => { if (!confirm("Unload YuE2 and restart the LLM? The LLM is back in about 1.5 minutes.")) return; const r = await (await fetch("/api/gpu/release", {method: "POST"})).json(); if (!r.ok) alert(r.message); tick(); };
+$("search").oninput = () => { libSig = ""; lastState && renderLibrary(lastState); };
+$("filter").onchange = () => { libSig = ""; lastState && renderLibrary(lastState); };
+document.addEventListener("click", (e) => { const b = e.target.closest("[data-act]"); if (b) act(b.dataset.act, b.dataset.id); });
+$("dlgClose").onclick = () => $("dlg").close();
+loadForm(store.get("form", null)); if (!store.get("form", null)) { setMode("song"); outputs(); }
+if (!$("author").value) $("author").value = store.get("author", "");
+$("author").addEventListener("change", () => store.set("author", $("author").value));
+tick(); setInterval(tick, 2000);
+</script>
+</body>
+</html>
