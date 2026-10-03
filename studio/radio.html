@@ -527,11 +527,11 @@ function setPlayingUI() {
   const playing = !!lid && !audio.paused, h = hearing();
   $("cassette").classList.toggle("playing", playing && !!h);
   $("kPlay").textContent = lid ? "⏸ PAUSE" : "▶ PLAY";
-  $("vMode").textContent = !lid ? "STOP" : !playing ? "TUNING…" : h ? "ON AIR ▶" : "DEAD AIR";
+  $("vMode").textContent = !lid ? "STOP" : !playing ? "TUNING…" : !h ? "DEAD AIR" : h.airing === "rerun" ? "RERUN ▶" : h.airing === "runner-up" ? "RUNNER-UP ▶" : "ON AIR ▶";
 }
 function syncNow() {
   const h = hearing(), id = h ? h.id : null;
-  if (id !== shownId) { shownId = id; showTrack(h ? {...h} : null); if (h) loadHistory(); }
+  if (id !== shownId) { shownId = id; showTrack(h ? {...h} : null); setPlayingUI(); if (h) loadHistory(); }
   if (lid && !h && R) hint(R.on ? firstWaitHint(9) : "The radio is off — press POWER or PLAY.");
 }
 function showTrack(t) {
@@ -543,7 +543,7 @@ function showTrack(t) {
   $("kKeep").classList.toggle("kept", !!t && t.feedback === "keep");
   if (t) hint("");
   if (!t) { $("now").innerHTML = "Nothing yet."; return; }
-  const sc = t.critic ? ` · critic ${t.critic.score.toFixed(3)}` : "";
+  const sc = (t.critic ? ` · critic ${t.critic.score.toFixed(3)}` : "") + (t.airing === "rerun" ? " · rerun" : t.airing === "runner-up" ? " · runner-up (spool was empty)" : "");
   $("now").innerHTML = `<div><strong>${esc(t.title)}</strong> <span class="muted small">${mmss(t.seconds)}${sc}</span></div>
     <div class="muted small" style="margin:4px 0 8px">${esc(t.style)}</div>
     ${t.lyrics ? `<details><summary class="small">Lyrics</summary><pre class="ly">${esc(t.lyrics)}</pre></details>` : `<div class="small muted">Instrumental</div>`}

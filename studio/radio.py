@@ -488,7 +488,8 @@ def spool_loop():
                 backoff.pop(sid, None)
             ready = len(station_tracks(sid, ("approved",)))
             fly = inflight(sid)
-            if ready + fly < state["target_ahead"] and fly < state["max_inflight"] + 1:
+            limit = state["max_inflight"] + 1 if ready else 2 * len(app.DEVICES)     # spool empty: both GPUs flat out
+            if ready + fly < state["target_ahead"] and fly < limit:
                 with lock:
                     writing[sid] = writing.get(sid, 0) + 1
                 threading.Thread(target=produce, args=(sid,), daemon=True).start()
@@ -563,8 +564,8 @@ def judge(job):
         dis_p = 0.5 * max(0.0, float(np.max(np.stack(dislikes) @ emb)) - 0.6) if dislikes else 0.0
         dup = float(np.max(np.stack(recent) @ emb)) if recent else 0.0
         score = base + like_b - dis_p - 1.0 * max(0.0, dup - 0.93)    # CLAP saturates within a genre: soft novelty penalty
-        if dup > 0.975:
-            sane = False                                                            # near-clone of something that aired
+        if dup > 0.99:
+            sane = False          # only a true clone; same-station songs routinely score 0.95-0.97 (CLAP saturates)
         hist = s["scores"][-20:]
         learned = s["kind"] == "folder"
         keep_frac, warmup = (0.7, 4) if learned else (0.85, 8)    # text stations only drop clear misses
@@ -669,7 +670,7 @@ def _play_silence():
     while bc["listeners"]:
         for i in range(0, len(bc["silence"]), 8 * FRAME):
             _broadcast(bc["silence"][i:i + 8 * FRAME])
-        if state["on"] and state["station"] and station_tracks(state["station"]):
+        if state["on"] and state["station"] and next_track(state["station"], mark=False):   # a new song, runner-up or rerun
             return
 
 
@@ -772,18 +773,41 @@ def api_state(listener=None):
             "making": making, "judging": judging, "gpu": app.state()["gpu"], "stream": stream_view(listener)}
 
 
+def _filler(sid):
+    """Nothing approved is ready: rather than dead air, air the best recent runner-up (a sane take that narrowly
+    missed the critic's bar), else a rerun of one of the station's own songs (favorites first, then its best-scored;
+    nothing aired in the last 45 min, nothing skipped or disliked)."""
+    now = time.time()
+    with app.lock:
+        mine = [j for j in app.jobs.values() if j.get("source") == "radio" and j.get("station") == sid and j["status"] == "done"
+                and (app.DATA / j["id"] / "song.mp3").is_file()]
+    runners = [j for j in mine if j.get("radio_status") == "rejected" and not j.get("played_at") and (j.get("critic") or {}).get("sane")
+               and now - j.get("finished", 0) < 12 * 3600]
+    if runners:
+        return max(runners, key=lambda j: j["critic"]["score"]), "runner-up"
+    reruns = [j for j in mine if j.get("radio_status") == "played" and now - (j.get("played_at") or 0) > 45 * 60
+              and j.get("radio_feedback") not in ("skip", "dislike")]
+    if reruns:
+        reruns.sort(key=lambda j: (j.get("radio_feedback") == "keep", (j.get("critic") or {}).get("score", 0)), reverse=True)
+        return random.choice(reruns[:5]), "rerun"
+    return None, None
+
+
 def next_track(sid, mark=True):
     with app.lock:
         ready = sorted(station_tracks(sid, ("approved",)), key=lambda j: j.get("approved_at", 0))
-        if not ready:
-            return None
-        j = ready[0]
-        if mark:
-            j.update(radio_status="played", played_at=time.time()); app.save_job(j)
-    if mark and sid in stations:
-        with lock:
-            stations[sid]["stats"]["played"] += 1; save_station(stations[sid])
-    return track_view(j)
+    j, airing = (ready[0], "new") if ready else _filler(sid)
+    if not j:
+        return None
+    if mark:
+        with app.lock:
+            j.update(radio_status="played", played_at=time.time(), airings=j.get("airings", 0) + 1); app.save_job(j)
+        if sid in stations:
+            with lock:
+                stations[sid]["stats"]["played"] += 1; save_station(stations[sid])
+        if airing != "new":
+            app.log(f"radio: spool empty, airing a {airing}: {j['title']}")
+    return track_view(j) | {"airing": airing}
 
 
 def favorites():
