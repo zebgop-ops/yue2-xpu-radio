@@ -539,18 +539,20 @@ function showTrack(t) {
   $("vTitle").textContent = t ? t.title.toUpperCase() : lid ? "— DEAD AIR · NEXT SONG ON THE WAY —" : "PICK A STATION · PRESS PLAY";
   const box = $("vTitleBox"); box.classList.remove("scroll");
   box.classList.toggle("scroll", $("vTitle").offsetWidth > box.clientWidth);      // marquee only when it doesn't fit
-  setLabels(null, t ? t.title : (lid ? "next song on the way…" : "insert tape"));
+  setLabels(null, t ? t.title : (lid ? "next song on the way…" : "insert tape")); updateLabelStation();
   $("kKeep").classList.toggle("kept", !!t && t.feedback === "keep");
   if (t) hint("");
   if (!t) { $("now").innerHTML = "Nothing yet."; return; }
   const sc = (t.critic ? ` · critic ${t.critic.score.toFixed(3)}` : "") + (t.airing === "rerun" ? " · rerun" : t.airing === "runner-up" ? " · runner-up (spool was empty)" : "");
   $("now").innerHTML = `<div><strong>${esc(t.title)}</strong> <span class="muted small">${mmss(t.seconds)}${sc}</span></div>
+    ${t.station_name && selected === RERUNS ? `<div class="small">from <b>${esc(t.station_name)}</b></div>` : ""}
     <div class="muted small" style="margin:4px 0 8px">${esc(t.style)}</div>
     ${t.lyrics ? `<details><summary class="small">Lyrics</summary><pre class="ly">${esc(t.lyrics)}</pre></details>` : `<div class="small muted">Instrumental</div>`}
     <div style="margin-top:8px"><a class="btn" href="${t.audio}?download=1" style="text-decoration:none">⬇ MP3</a></div>`;
 }
 function firstWaitHint(n) {
-  const st = R && R.stations.find(s => s.id === selected), g = R && R.gpu;
+  const st = R && stOf(selected), g = R && R.gpu;
+  if (selected === RERUNS) return st && st.ready ? "Cueing up a rerun…" : "No songs have aired yet — play a station first, then reruns have something to play.";
   if (g && g.owner === "switching") return `Taking the GPUs from the LLM: ${g.detail}`;
   if (st && st.kind === "folder" && st.analysis.status !== "done") return "This station is still learning its songs — analysis must finish first.";
   if (st && st.problem) return "Generation paused: " + st.problem;
@@ -590,13 +592,32 @@ $("kPower").onclick = async () => {
   const on = !(R && R.on);
   if (on && !selected) return hint("Pick a station first.");
   if (!on) { wantPlay = false; disconnect(); }
-  try { await post("/api/radio/power", {on, station: selected}); prevOn = on; hint(on ? "Radio on — generating songs (the LLM is paused while the radio runs). Press PLAY to listen." : "Radio off — the GPUs go back to the LLM once the current takes finish."); }
+  try { await post("/api/radio/power", {on, station: selected}); prevOn = on; hint(!on ? "Radio off — the GPUs go back to the LLM once the current takes finish." : selected === RERUNS ? "Reruns on — nothing is generated, the LLM keeps the GPUs. Press PLAY to listen." : "Radio on — generating songs (the LLM is paused while the radio runs). Press PLAY to listen."); }
   catch (e) { hint(e.message); }
   refresh();
 };
 $("vol").oninput = () => { audio.volume = +$("vol").value; store.set("vol", audio.volume); };
 // ---------------- stations + state
+const RERUNS = "__reruns__";
+function rerunStation() {
+  const r = (R && R.reruns) || {songs: 0, stations: 0, favorites: 0};
+  return {id: RERUNS, name: "♻ Reruns", kind: "reruns", ready: r.songs, stats: {played: 0, kept: r.favorites}, analysis: {}, problem: null,
+          description: "Shuffles songs from every station — favorites more often. Nothing new is generated, so the LLM keeps the GPUs.",
+          meta: r.songs ? `${r.songs} songs from ${r.stations} station${r.stations === 1 ? "" : "s"} · ♥ ${r.favorites} · no GPU needed` : "plays songs once stations have aired some"};
+}
+const stOf = (id) => id === RERUNS ? rerunStation() : R && R.stations.find(s => s.id === id);
+function labelTarget() {               // what the cassette label shows: the station, or in rerun mode the song's own station
+  if (selected === RERUNS) return current && current.station_name ? {name: "♻ " + current.station_name, st: {id: current.station, name: current.station_name}}
+                                                                 : {name: "♻ Reruns", st: {id: RERUNS, name: "reruns"}};
+  const st = stOf(selected); return {name: st ? st.name : "b70 radio", st};
+}
+function updateLabelStation() { const t = labelTarget(); if (labelStation !== t.name) { setLabels(t.name, null); stationColors(t.st); } }
 function stationCard(s) {
+  if (s.kind === "reruns") {
+    const air = R.on && R.station === RERUNS;
+    return `<button class="tape ${s.id === selected ? "sel" : ""} ${air ? "air" : ""}" data-st="${RERUNS}" style="--c1:#e2483d;--c2:#3f8cff"><span class="mini"><i></i><i></i></span><div class="nm">${esc(s.name)}<span class="badge">all stations</span>${air ? '<span class="badge" style="color:var(--red)">ON AIR</span>' : ""}</div>
+      <div class="ds">${esc(s.description)}</div><div class="mt">${esc(s.meta)}</div></button>`;
+  }
   const kind = s.kind === "folder" ? "learned" : "text";
   let meta = `${s.ready} ready · ${s.stats.played} played · ♥ ${s.stats.kept}`;
   if (s.kind === "folder") {
@@ -611,19 +632,19 @@ function stationCard(s) {
 }
 let shelfSig = "";
 function renderShelf() {
-  const sig = JSON.stringify(R.stations.map(s => [s.id, s.name, s.ready, s.stats, s.analysis, s.files])) + selected + R.on + R.station;
+  const sig = JSON.stringify([R.reruns, R.stations.map(s => [s.id, s.name, s.ready, s.stats, s.analysis, s.files])]) + selected + R.on + R.station;
   if (sig === shelfSig) return; shelfSig = sig;
-  $("shelf").innerHTML = R.stations.map(stationCard).join("") || `<div class="muted">No stations yet.</div>`;
+  $("shelf").innerHTML = [rerunStation(), ...R.stations].map(stationCard).join("");
 }
 function renderDeck() {
-  const st = R.stations.find(s => s.id === selected);
-  $("vStation").textContent = st ? st.name.toUpperCase() : "NO TAPE";
-  if (labelStation !== (st ? st.name : "b70 radio")) { setLabels(st ? st.name : "b70 radio", null); stationColors(st); }
+  const st = stOf(selected), rr = selected === RERUNS;
+  $("vStation").textContent = !st ? "NO TAPE" : rr ? "RERUNS" + (current && current.station_name ? " · " + current.station_name.toUpperCase() : "") : st.name.toUpperCase();
+  updateLabelStation();
   $("deck").classList.toggle("lit", !!R.on);
   $("kPower").classList.toggle("on", R.on);
   const ready = st ? st.ready : 0, n = Math.min(4, ready);
-  $("vSpool").innerHTML = `SPOOL ${"▮".repeat(n)}<span class="dim">${"▯".repeat(4 - n)}</span> ${ready} READY`;
-  const making = R.making.filter(m => !st || m.station === st.id);
+  $("vSpool").innerHTML = rr ? `LIBRARY ${ready} SONGS` : `SPOOL ${"▮".repeat(n)}<span class="dim">${"▯".repeat(4 - n)}</span> ${ready} READY`;
+  const making = rr ? [] : R.making.filter(m => !st || m.station === st.id);
   $("vGen").className = making.length ? "" : "dim";
   $("vGen").textContent = making.length ? `REC ${making.filter(m => m.status === "running").length}/${making.length}` : "REC —";
   if (st && st.problem) { $("vGen").className = ""; $("vGen").textContent = "REC PAUSED"; $("vGen").title = st.problem; } else $("vGen").title = "";
@@ -701,7 +722,11 @@ $("shelf").onclick = async (e) => {
   const b = e.target.closest("[data-st]"); if (!b) return;
   const id = b.dataset.st; if (id === selected) return openStation(id);
   selected = id; store.set("station", id); shelfSig = ""; renderShelf(); renderDeck(); loadHistory();
-  if (R.on) { await post("/api/radio/power", {on: true, station: id}).catch(e => hint(e.message)); hint("Retuned for everyone — the new station starts once its first song is ready."); refresh(); }
+  if (R.on) {
+    await post("/api/radio/power", {on: true, station: id}).catch(e => hint(e.message));
+    hint(id === RERUNS ? "Reruns for everyone — nothing new is generated, so the GPUs go back to the LLM." : "Retuned for everyone — the new station starts once its first song is ready.");
+    refresh();
+  }
   else hint("Station selected — press PLAY (click the tape again for details).");
 };
 
@@ -709,6 +734,7 @@ $("shelf").onclick = async (e) => {
 function openDialog(title, html) { $("dlgT").textContent = title; $("dlgB").innerHTML = html; $("dlg").showModal(); }
 $("dlgX").onclick = () => $("dlg").close();
 function openStation(id) {
+  if (id === RERUNS) return hint("Reruns shuffle every station's aired songs (favorites more often). Skipped and disliked songs never come back.");
   const s = R.stations.find(x => x.id === id); if (!s) return;
   const p = s.profile;
   openDialog(s.name, `<p class="small muted">${s.kind === "folder" ? "Learns from its own songs." : "Defined by its description."} Vocals: ${esc(s.vocals)}${s.language ? " · " + esc(s.language) : ""}</p>

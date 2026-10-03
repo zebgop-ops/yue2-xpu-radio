@@ -407,13 +407,13 @@ class Worker(threading.Thread):
         import radio
         with lock:
             for j in jobs.values():           # radio work never starts (or re-takes the GPUs) while the radio is off
-                if j["status"] == "queued" and j.get("source") == "radio" and not radio.state["on"]:
+                if j["status"] == "queued" and j.get("source") == "radio" and not radio.generating():
                     j.update(status="cancelled", stage="", finished=time.time(), radio_status="cancelled"); save_job(j)
             return sorted((j for j in jobs.values() if j["status"] == "queued"), key=lambda j: (j.get("priority", 0), j["created"]))
 
     def run(self):
         import radio
-        if self.paused_llm and not llm_active() and radio.state["on"]:
+        if self.paused_llm and not llm_active() and radio.generating():
             log("radio resumed after a quick restart: leaving the LLM paused")
         elif self.paused_llm and not llm_active():
             log("recovering: restarting the LLM that a previous studio run paused")
@@ -746,7 +746,7 @@ def state():
         import radio
         return {"gpu": dict(owner=gpu["owner"], detail=gpu["detail"], llm_unit=LLM_UNIT, return_minutes=RETURN_MINUTES,
                             idle_seconds_left=idle_left, release_requested=gpu["release_requested"], workers=gpu["workers"],
-                            radio_on=radio.state["on"]),
+                            radio_on=radio.state["on"], radio_generating=radio.generating()),
                 "queue": [summary(j) for j in queue], "library": [summary(j) for j in library[:300]],
                 "limits": {"max_queued": MAX_QUEUED}, "lyrics_writers": [label for _, _, label in LYRICS_LLMS]}
 
@@ -868,8 +868,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/gpu/release":
                 import radio
-                if radio.state["on"]:
-                    radio.set_power(False)          # otherwise the radio would take the GPUs straight back
+                if radio.generating():
+                    radio.set_power(False)          # otherwise the radio would take the GPUs straight back (reruns can stay on)
                 with lock:
                     busy = any(j["status"] in ("queued", "running") and j.get("source") != "radio" for j in jobs.values())
                     if not busy:

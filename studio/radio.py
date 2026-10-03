@@ -20,6 +20,12 @@ RADIO = None
 lock = threading.RLock()
 stations: dict[str, dict] = {}
 state = {"on": False, "station": None, "target_ahead": 4, "max_inflight": 2}
+RERUNS = "__reruns__"               # pseudo-station: replays songs from every station, generates nothing
+
+
+def generating():
+    """True while the radio is on a real station (and so wants the GPUs); rerun mode leaves them to the LLM."""
+    return state["on"] and state["station"] in stations
 writing = {}                        # station id -> number of specs being written right now
 backoff = {}                        # station id -> {"until": t, "delay": s, "reason": str}
 AUDIO_EXT = {".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aac", ".opus"}
@@ -752,7 +758,16 @@ def stream_view(listener=None):
 def track_view(j):
     return {"id": j["id"], "title": j["title"], "style": j["style"], "lyrics": j.get("lyrics", ""), "mode": j["mode"],
             "seconds": j.get("seconds"), "station": j.get("station"), "critic": j.get("critic"), "feedback": j.get("radio_feedback"),
-            "played_at": j.get("played_at"), "audio": f"/files/{j['id']}/song.mp3"}
+            "played_at": j.get("played_at"), "audio": f"/files/{j['id']}/song.mp3",
+            "station_name": stations[j["station"]]["name"] if j.get("station") in stations else None}
+
+
+def rerun_library():
+    with app.lock:
+        aired = [j for j in app.jobs.values() if j.get("source") == "radio" and j["status"] == "done" and j.get("played_at")
+                 and j.get("radio_feedback") not in ("skip", "dislike")]
+    return {"id": RERUNS, "songs": len(aired), "stations": len({j.get("station") for j in aired}),
+            "favorites": sum(1 for j in aired if j.get("radio_feedback") == "keep")}
 
 
 def api_state(listener=None):
@@ -770,7 +785,8 @@ def api_state(listener=None):
                   for j in app.jobs.values() if j.get("source") == "radio" and j["status"] in ("queued", "running")]
         judging = sum(1 for j in app.jobs.values() if j.get("radio_status") == "judging")
     return {"on": state["on"], "station": state["station"], "target_ahead": state["target_ahead"], "stations": st,
-            "making": making, "judging": judging, "gpu": app.state()["gpu"], "stream": stream_view(listener)}
+            "making": making, "judging": judging, "gpu": app.state()["gpu"], "stream": stream_view(listener),
+            "reruns": rerun_library()}
 
 
 def _filler(sid):
@@ -793,10 +809,32 @@ def _filler(sid):
     return None, None
 
 
-def next_track(sid, mark=True):
+def _rerun_pick():
+    """Rerun mode: a weighted shuffle over every song that has aired on any station - favorites 3x, better critic
+    scores a little more, nothing aired in the last 3 h, never skipped/disliked songs, and preferably not the
+    same station twice in a row."""
+    now = time.time()
     with app.lock:
-        ready = sorted(station_tracks(sid, ("approved",)), key=lambda j: j.get("approved_at", 0))
-    j, airing = (ready[0], "new") if ready else _filler(sid)
+        pool = [j for j in app.jobs.values() if j.get("source") == "radio" and j["status"] == "done" and j.get("played_at")
+                and j.get("radio_feedback") not in ("skip", "dislike") and (app.DATA / j["id"] / "song.mp3").is_file()]
+    if not pool:
+        return None
+    fresh = [j for j in pool if now - j["played_at"] > 3 * 3600]
+    if not fresh:                                   # small library: the least recently aired third
+        fresh = sorted(pool, key=lambda j: j["played_at"])[:max(1, len(pool) // 3)]
+    last = (bc["aired"][-1] if bc["aired"] else {}).get("station")
+    w = [(3.0 if j.get("radio_feedback") == "keep" else 1.0) * (0.5 + max(0.0, (j.get("critic") or {}).get("score", 0.7)))
+         * (0.4 if j.get("station") == last else 1.0) for j in fresh]
+    return random.choices(fresh, weights=w)[0]
+
+
+def next_track(sid, mark=True):
+    if sid == RERUNS:
+        j, airing, ready = _rerun_pick(), "rerun", None
+    else:
+        with app.lock:
+            ready = sorted(station_tracks(sid, ("approved",)), key=lambda j: j.get("approved_at", 0))
+        j, airing = (ready[0], "new") if ready else _filler(sid)
     if not j:
         return None
     if mark:
@@ -805,7 +843,7 @@ def next_track(sid, mark=True):
         if sid in stations:
             with lock:
                 stations[sid]["stats"]["played"] += 1; save_station(stations[sid])
-        if airing != "new":
+        if airing != "new" and sid != RERUNS:
             app.log(f"radio: spool empty, airing a {airing}: {j['title']}")
     return track_view(j) | {"airing": airing}
 
@@ -830,7 +868,8 @@ def favorites():
 
 def history(sid, limit=40):
     with app.lock:
-        played = sorted((j for j in app.jobs.values() if j.get("source") == "radio" and j.get("station") == sid and j.get("played_at")),
+        played = sorted((j for j in app.jobs.values() if j.get("source") == "radio" and j.get("played_at")
+                         and (sid == RERUNS or j.get("station") == sid)),
                         key=lambda j: -j["played_at"])[:limit]
     return [track_view(j) for j in played]
 
@@ -859,19 +898,19 @@ def feedback(track_id, kind):
 def set_power(on, sid=None):
     with lock:
         if sid:
-            if sid not in stations:
+            if sid not in stations and sid != RERUNS:
                 raise app.BadRequest("No such station")
             state["station"] = sid
         if on and not state["station"]:
             raise app.BadRequest("Pick a station first")
         state["on"] = bool(on)
         save_state()
-    if not on:
-        with app.lock:                         # drop queued and in-progress radio work so the GPUs free up fast
+    if not on or state["station"] == RERUNS:
+        with app.lock:                         # drop queued (and, when switching off, in-progress) radio work so the GPUs free up
             for j in app.jobs.values():
                 if j.get("source") == "radio" and j["status"] == "queued":
                     j.update(status="cancelled", stage="", finished=time.time(), radio_status="cancelled"); app.save_job(j)
-                elif j.get("source") == "radio" and j["status"] == "running":
+                elif j.get("source") == "radio" and j["status"] == "running" and not on:
                     j["_cancel"] = True
             studio_busy = any(j["status"] in ("queued", "running") and j.get("source") != "radio" for j in app.jobs.values())
             if not studio_busy:
