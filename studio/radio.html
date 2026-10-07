@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>b70 Radio</title>
+<link rel="icon" id="favicon" type="image/svg+xml" href="/icons/radio.svg">
+<link rel="alternate icon" type="image/png" sizes="32x32" href="/icons/radio-32.png">
+<link rel="apple-touch-icon" href="/icons/radio-180.png">
+<meta name="theme-color" content="#1b1c1f">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Share+Tech+Mono&family=Oswald:wght@500;600&display=swap" rel="stylesheet">
 <style>
@@ -523,8 +527,14 @@ function connect() {
   setTimeout(refresh, 400);
 }
 function disconnect() { lid = null; audio.pause(); audio.removeAttribute("src"); audio.load(); setPlayingUI(); }
+let favLive = null;
+function setFavicon(live) {            // red ON-AIR dot in the tab while this browser is listening
+  if (live === favLive) return; favLive = live;
+  $("favicon").href = live ? "/icons/radio-live.svg" : "/icons/radio.svg";
+}
 function setPlayingUI() {
   const playing = !!lid && !audio.paused, h = hearing();
+  setFavicon(playing && !!h);
   $("cassette").classList.toggle("playing", playing && !!h);
   $("kPlay").textContent = lid ? "⏸ PAUSE" : "▶ PLAY";
   $("vMode").textContent = !lid ? "STOP" : !playing ? "TUNING…" : !h ? "DEAD AIR" : h.airing === "rerun" ? "RERUN ▶" : h.airing === "runner-up" ? "RUNNER-UP ▶" : "ON AIR ▶";
@@ -739,6 +749,7 @@ function openStation(id) {
   const p = s.profile;
   openDialog(s.name, `<p class="small muted">${s.kind === "folder" ? "Learns from its own songs." : "Defined by its description."} Vocals: ${esc(s.vocals)}${s.language ? " · " + esc(s.language) : ""}</p>
     ${s.description ? `<p>${esc(s.description)}</p>` : ""}
+    ${s.theme ? `<p class="small"><b>Lyrics theme:</b> ${esc(s.theme)}</p>` : ""}
     ${p ? `<p class="small"><b>Learned:</b> ${esc(p.top.genre.join(", "))}<br><b>Moods:</b> ${esc(p.top.mood.join(", "))}<br><b>Instruments:</b> ${esc(p.top.instrument.join(", "))}<br>
       <b>Tempo:</b> ${p.bpm_range ? p.bpm_range.join("–") + " BPM" : "?"} · <b>Vocals:</b> ${Math.round(p.vocal_share * 100)}% · ${p.tracks} songs</p>` : ""}
     <p class="small muted">Generated ${s.stats.generated} · approved ${s.stats.approved} · rejected by the critic ${s.stats.rejected} · played ${s.stats.played} · kept ${s.stats.kept} · disliked ${s.stats.disliked}</p>
@@ -776,13 +787,15 @@ $("newStation").onclick = () => {
     <textarea id="nDesc" rows="3" placeholder="e.g. Warm Sunday-morning jazz: brushed drums, upright bass, piano trio, occasional soft female vocal, coffee-shop calm"></textarea>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div><label class="f" for="nVocals">Vocals</label><select id="nVocals"><option value="mix">Mix of both</option><option value="vocals">Mostly vocals</option><option value="instrumental">Instrumental only</option></select></div>
     <div><label class="f" for="nLang">Language <span>(vocals)</span></label><select id="nLang"><option value="">Any / from description</option><option>English</option><option>Mandarin</option><option>Japanese</option><option>Korean</option><option>Spanish</option><option>French</option><option>German</option></select></div></div>
+    <label class="f" for="nTheme">Lyrics theme <span>— optional, e.g. "Halloween horror stories" or "songs about the sea"</span></label>
+    <input type="text" id="nTheme" maxlength="1000" placeholder="what every song's lyrics should be about">
     <p class="small muted" id="nFolderNote" hidden>After creating it, open the station tape to drop in your songs, then press “Learn from these songs”. The radio analyzes tempo, key, energy and sound (CLAP), and its critic keeps the takes that sound most like them.</p>
     <div style="margin-top:12px;display:flex;gap:8px;align-items:center"><button class="btn primary" id="nCreate">Create station</button><span class="err" id="nErr"></span></div>`);
   let kind = "text";
   document.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { kind = b.dataset.k; document.querySelectorAll("[data-k]").forEach(x => x.setAttribute("aria-pressed", x === b)); $("nFolderNote").hidden = kind !== "folder"; $("nDescHint").textContent = kind === "folder" ? "— optional; your songs define it" : "— genres, moods, instruments, era, vocals"; });
   $("nCreate").onclick = async () => {
     try {
-      const r = await post("/api/radio/stations", {kind, name: $("nName").value, description: $("nDesc").value, vocals: $("nVocals").value, language: $("nLang").value});
+      const r = await post("/api/radio/stations", {kind, name: $("nName").value, description: $("nDesc").value, vocals: $("nVocals").value, language: $("nLang").value, theme: $("nTheme").value});
       selected = r.station.id; store.set("station", selected); shelfSig = ""; await refresh(); $("dlg").close();
       if (kind === "folder") openStation(selected); else hint(`“${r.station.name}” is ready — press PLAY.`);
     } catch (e) { $("nErr").textContent = e.message; }

@@ -783,6 +783,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, (HERE / "index.html").read_bytes(), "text/html; charset=utf-8")
         if path in ("/radio", "/radio.html"):
             return self.send(200, (HERE / "radio.html").read_bytes(), "text/html; charset=utf-8")
+        if path == "/favicon.ico" or path.startswith("/icons/"):
+            name = "studio-32.png" if path == "/favicon.ico" else path.rsplit("/", 1)[1]
+            f = HERE / "icons" / name
+            if not re.fullmatch(r"[\w-]+\.(png|svg)", name) or not f.is_file():
+                return self.send(404, {"error": "No such icon"})
+            body = f.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml" if name.endswith(".svg") else "image/png")
+            self.send_header("Content-Length", str(len(body))); self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers(); self.wfile.write(body)
+            return
         if path in ("/radio/stream.mp3", "/radio/stream", "/stream.mp3"):
             import radio
             return radio.stream(self)

@@ -107,7 +107,8 @@ def create_station(body):
     if vocals not in ("vocals", "instrumental", "mix"):
         raise app.BadRequest("vocals must be vocals, instrumental or mix")
     s = {"id": uuid.uuid4().hex[:10], "name": name, "kind": kind, "description": desc, "vocals": vocals,
-         "language": app.clean_text(body.get("language"), "Language", 40), "created": time.time(),
+         "language": app.clean_text(body.get("language"), "Language", 40),
+         "theme": app.clean_text(body.get("theme"), "Lyrics theme", 1000), "created": time.time(),
          "stats": {"generated": 0, "approved": 0, "rejected": 0, "played": 0, "kept": 0, "skipped": 0, "disliked": 0},
          "feedback": [], "scores": [], "analysis": {"status": "none" if kind == "folder" else "n/a"}, "profile": None}
     with lock:
@@ -398,6 +399,9 @@ def write_spec(s, short=False):
                  "disagrees with the automatic tags, trust your knowledge.")
     if s.get("language"):
         u.append(f"Language for vocals: {s['language']}")
+    if s.get("theme") and not want_inst:
+        u.append(f"LYRICS THEME for every song on this station (keep the station's musical sound; this is about the words, "
+                 f"title and mood): {s['theme']}")
     u.append("This song must be INSTRUMENTAL." if want_inst else "This song has vocals.")
     if short:
         u.append("Make this one SHORT - it opens the broadcast: [Verse] of 4 lines, [Chorus] of 4 lines, [Outro] of 2 lines (10 sung lines total).")
@@ -774,7 +778,7 @@ def api_state(listener=None):
     with lock:
         st = []
         for s in sorted(stations.values(), key=lambda s: s["created"]):
-            st.append({k: s.get(k) for k in ("id", "name", "kind", "description", "vocals", "language", "stats", "analysis")} |
+            st.append({k: s.get(k) for k in ("id", "name", "kind", "description", "vocals", "language", "theme", "stats", "analysis")} |
                       {"ready": len(station_tracks(s["id"])), "inflight": inflight(s["id"]),
                        "problem": (backoff[s["id"]]["reason"] + f" — retrying in {int(backoff[s['id']]['until'] - time.time())}s")
                                   if s["id"] in backoff and time.time() < backoff[s["id"]]["until"] else None,

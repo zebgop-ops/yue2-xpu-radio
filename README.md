@@ -15,6 +15,7 @@ The radio lives inside a small **Music Studio** (make individual songs or instru
 ## What it does
 
 - **Two kinds of stations.** *Text* stations are defined by a description. *Learned* stations analyze uploaded songs with CLAP + librosa (genre/mood/instrument tags, vocal share, tempo, key) and also pass the song names to the songwriter — the LLM usually knows the artists far better than the automatic tags do.
+- **Lyrics themes.** A station can carry a theme ("mature Halloween horror stories", "songs about the sea"): the station keeps its musical sound and every song's words, title and mood follow the theme.
 - **A songwriter LLM** (any OpenAI-compatible server) writes a JSON spec per song: title, style line, structured lyrics sized for ~2.5–3 minutes. It sees what aired recently, what you kept / skipped / disliked, and gets a random "variety axis" each time; overused title words are banned so stations don't collapse onto one idea.
 - **YuE2 on every GPU.** One worker process per card (`xpu:0`, `xpu:1`) with XPU graphs, ~0.7× real time per card (a 3.5 min song renders in ~2.5 min), so two cards stay well ahead of playback.
 - **A critic.** Each take is embedded with CLAP and scored against the station (its description, or the corpus of learned songs), nudged by your likes/dislikes, with a near-duplicate penalty. The bottom 15 % (text stations) or 30 % (learned) are dropped.
@@ -98,7 +99,7 @@ Open `http://<host>:7860/` (studio) or `http://<host>:7860/radio`. For a service
 | `POST /api/radio/skip` `{track, kind}` | skip (or `kind: "dislike"`) the song on air |
 | `POST /api/radio/feedback` `{track, kind}` | `keep` / `skip` / `dislike` / `clear` |
 | `GET /api/radio/favorites` | every kept song, all stations, newest first |
-| `POST /api/radio/stations` | create `{kind: "text"\|"folder", name, description, vocals, language}` |
+| `POST /api/radio/stations` | create `{kind: "text"\|"folder", name, description, vocals, language, theme}` |
 | `PUT /api/radio/stations/<id>/files/<name>` | upload a song to a learned station, then `POST .../analyze` |
 
 ## The YuE2 XPU patch
