@@ -710,6 +710,7 @@ function syllables(word) {
   if (ct) { const p = syllablesCore(ct[1]); p[p.length - 1] += ct[2]; return p; }
   return syllablesCore(word);
 }
+const ONSETS = new Set("bl br cl cr dr fl fr gl gr pl pr sc sk sl sm sn sp st sw tr tw wr thr shr squ str spr scr spl".split(" "));
 function syllablesCore(word) {
   // English heuristic: vowel groups are syllable nuclei; consonant digraphs (ch, gh, ng, th, ...) stay together;
   // one consonant between vowels starts the next syllable (V-CV), two split (VC-CV); silent final e/-ed/-es merge.
@@ -729,7 +730,12 @@ function syllablesCore(word) {
     const a = nuclei[n - 1], b = nuclei[n], k = b - a - 1;
     if (k <= 0) cuts.push(b);
     else if (k === 1) cuts.push(units[a + 1].s === "ng" || units[a + 1].s === "x" ? b : a + 1);
-    else cuts.push(a + 2);
+    else {                                                                  // 2+ consonants: the next syllable takes the longest valid onset
+      let take = 1;
+      if (b === units.length - 1 && units[b].s === "e" && units[b - 1].s === "l") take = 2;      // lit·tle, ta·ble
+      else for (let n = Math.min(3, k); n >= 2; n--) if (ONSETS.has(units.slice(b - n, b).map(u => u.s).join(""))) { take = n; break; }
+      cuts.push(b - take);
+    }
   }
   // silent endings: final "e" after a consonant (but not "-le"), "-ed" not after t/d, "-es" not after s/x/z/ch/sh
   const last = cuts[cuts.length - 1], tail = units.slice(last).map(u => u.s).join(""), before = units[last - 1] && units[last - 1].s;

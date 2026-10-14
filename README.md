@@ -12,6 +12,10 @@ The radio lives inside a small **Music Studio** (make individual songs or instru
 |---|---|
 | <img src="docs/radio-mobile.png" width="260"> | <img src="docs/studio.png" width="520"> |
 
+**The live score:** the melody-and-chord score YuE2 composed for the song on air, with the lyrics aligned under the vocal line; the bar being sung lights up and the score scrolls along.
+
+![The live score with lyrics, current bar highlighted](docs/radio-score.png)
+
 ## What it does
 
 - **Two kinds of stations.** *Text* stations are defined by a description. *Learned* stations analyze uploaded songs with CLAP + librosa (genre/mood/instrument tags, vocal share, tempo, key) and also pass the song names to the songwriter — the LLM usually knows the artists far better than the automatic tags do.
