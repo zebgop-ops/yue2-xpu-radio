@@ -151,6 +151,8 @@ h2 { font-size: 15px; margin: 0 0 10px; }
 #score svg { display: block; }
 #score .now { fill: var(--red); stroke: var(--red); }
 #score .abcjs-annotation { fill: var(--red); font-weight: 700; }
+#score .abcjs-lyric { fill: var(--text); }
+#score .abcjs-lyric.now { fill: var(--red); stroke: none; font-weight: 700; }
 #score .empty { padding: 16px 0; color: var(--muted); font-size: 14px; }
 .favs { margin-top: 16px; }
 .favs h2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -365,7 +367,7 @@ input[type=text], textarea, select { width: 100%; font: inherit; color: var(--te
 
   <section class="panel scorep" id="scorePanel">
     <h2>🎼 Score <span class="sec" id="scoreSec"></span><span class="meta" id="scoreMeta"></span>
-      <span class="ctl"><label><input type="checkbox" id="scoreFollow" checked> follow along</label>
+      <span class="ctl"><label><input type="checkbox" id="scoreLyrics" checked> lyrics</label><label><input type="checkbox" id="scoreFollow" checked> follow along</label>
         <button class="btn" id="scoreToggle" aria-expanded="true">Hide</button></span></h2>
     <div id="score"><div id="scoreSheet"></div><div class="empty" id="scoreEmpty">The score YuE2 composed appears here when a song is on air — melody, chords and song sections, with the bar being played highlighted.</div></div>
   </section>
@@ -700,6 +702,170 @@ async function loadHistory() {
   $("hist").innerHTML = r.tracks.length ? r.tracks.map(t => `<li><span>${t.feedback === "keep" ? "♥" : t.feedback === "dislike" ? "✕" : t.feedback === "skip" ? "⏭" : "♪"}</span>
     <div class="t"><div>${esc(t.title)}</div><div>${esc(t.style)}</div></div><a class="btn" href="${t.audio}?download=1" title="Download">⬇</a></li>`).join("") : `<li class="muted">Nothing played on this station yet.</li>`;
 }
+// Align song lyrics to a YuE2 ABC score: adds "w:" lyric lines under the Vocal voice.
+// Sections ("% verse" in the score, "[Verse]" in the lyrics) are matched in order; inside a section the vocal
+// melody is split into phrases at rests and each phrase gets one lyric line, one syllable per note.
+function syllables(word) {
+  const ct = word.match(/^(.*[A-Za-z])((?:'|’)(?:s|d|ll|re|ve|m|t))$/i);              // contractions: love's, you're, I'll
+  if (ct) { const p = syllablesCore(ct[1]); p[p.length - 1] += ct[2]; return p; }
+  return syllablesCore(word);
+}
+function syllablesCore(word) {
+  // English heuristic: vowel groups are syllable nuclei; consonant digraphs (ch, gh, ng, th, ...) stay together;
+  // one consonant between vowels starts the next syllable (V-CV), two split (VC-CV); silent final e/-ed/-es merge.
+  const letters = word.replace(/[^A-Za-z']/g, ""), w = letters.toLowerCase();
+  if (w.replace(/'/g, "").length <= 3) return [word];
+  const units = []; let i = 0;
+  while (i < w.length) {
+    const vow = w.slice(i).match(/^(?:[aeiou]+y?|y(?![aeiou]))[aeiou]*/);
+    if (vow && !(i === 0 && w[0] === "y" && /[aeiou]/.test(w[1] || ""))) { units.push({v: true, s: vow[0]}); i += vow[0].length; continue; }
+    const dg = w.slice(i, i + 2), cons = /^(ch|sh|th|ph|wh|gh|ck|ng|qu|'s|'d|'t|'l|'r|'v|'m)$/.test(dg) ? dg : w[i];
+    units.push({v: false, s: cons}); i += cons.length;
+  }
+  const nuclei = units.map((u, k) => u.v ? k : -1).filter(k => k >= 0);
+  if (nuclei.length < 2) return [word];
+  const cuts = [];                                                          // unit index where a new syllable starts
+  for (let n = 1; n < nuclei.length; n++) {
+    const a = nuclei[n - 1], b = nuclei[n], k = b - a - 1;
+    if (k <= 0) cuts.push(b);
+    else if (k === 1) cuts.push(units[a + 1].s === "ng" || units[a + 1].s === "x" ? b : a + 1);
+    else cuts.push(a + 2);
+  }
+  // silent endings: final "e" after a consonant (but not "-le"), "-ed" not after t/d, "-es" not after s/x/z/ch/sh
+  const last = cuts[cuts.length - 1], tail = units.slice(last).map(u => u.s).join(""), before = units[last - 1] && units[last - 1].s;
+  if (/^[^aeiouy]?e$/.test(tail) && !/^le$/.test(tail) && nuclei.length >= 2) cuts.pop();
+  else if (/^[^aeiouy]?ed$/.test(tail) && !/^[td]ed$/.test(tail) && !/[td]/.test(tail[0] === "e" ? before : tail[0])) cuts.pop();
+  else if (/^[^aeiouy]?es$/.test(tail) && !/^(s|x|z|ch|sh|c|g)es$/.test(tail)) cuts.pop();
+  const sylls = []; let start = 0;
+  for (const c of cuts.concat(units.length)) { sylls.push(units.slice(start, c).map(u => u.s).join("")); start = c; }
+  // map back onto the original spelling/case
+  const out = []; let pos = 0;
+  for (const sy of sylls) { let n = 0, t = ""; while (pos < word.length && n < sy.length) { const ch = word[pos++]; t += ch; if (/[A-Za-z']/.test(ch)) n++; } out.push(t); }
+  if (pos < word.length) out[out.length - 1] += word.slice(pos);
+  return out.filter(Boolean);
+}
+const norm = (s) => s.toLowerCase().replace(/[^a-z]/g, "");
+function parseLyrics(text) {
+  const secs = []; let cur = null;
+  for (const raw of (text || "").split("\n")) {
+    const line = raw.trim(); if (!line) continue;
+    const tag = line.match(/^\[([^\]]+)\]$/);
+    if (tag) { cur = {tag: norm(tag[1]), lines: []}; secs.push(cur); continue; }
+    if (!cur) { cur = {tag: "verse", lines: []}; secs.push(cur); }
+    cur.lines.push(line);
+  }
+  return secs.filter(s => s.lines.length);
+}
+// tokens of one vocal music line: notes (with tied-from-previous flag), rests (with length in L units)
+function noteTokens(line) {
+  const src = line.replace(/"[^"]*"/g, "").replace(/\{[^}]*\}/g, "").replace(/![^!]*!/g, "");
+  const re = /\[[A-Za-z]:[^\]]*\]|\[[^\]]*\]|[_^=]*[A-Ga-g][,']*[\d/]*|[zx][\d/]*|Z\d*|-|\|/g;
+  const toks = []; let m, tiedNext = false;
+  while ((m = re.exec(src))) {
+    const t = m[0];
+    if (t === "-") { tiedNext = true; continue; }
+    if (t === "|") { toks.push({bar: true}); continue; }
+    if (/^\[[A-Za-z]:/.test(t)) continue;
+    if (/^[zxZ]/.test(t)) { const n = t.slice(1); toks.push({rest: true, len: t[0] === "Z" ? 99 : n.includes("/") ? 0.5 : +(n || 1)}); tiedNext = false; continue; }
+    const d = t.match(/[\d/]*$/)[0];
+    const len = !d ? 1 : d.includes("/") ? (+(d.split("/")[0]) || 1) / (+(d.split("/")[1]) || 2) : +d;
+    if (tiedNext && toks.length && toks[toks.length - 1].note) { toks.push({note: true, tied: true, len}); tiedNext = false; continue; }
+    toks.push({note: true, tied: tiedNext, len}); tiedNext = false;
+  }
+  return toks;
+}
+function alignLyrics(abc, lyrics) {
+  let lyr = parseLyrics(lyrics); if (!lyr.length) return abc;
+  const lines = abc.split("\n");
+  // score sections -> list of vocal music line indexes
+  const sections = []; let sec = null, inVocal = false;
+  lines.forEach((l, i) => {
+    const c = l.match(/^%\s*(\w[\w -]*)\s*$/);
+    if (c) { sec = {tag: norm(c[1]), lines: []}; sections.push(sec); return; }
+    if (/^V:\s*Vocal\b/.test(l)) { inVocal = true; return; }
+    if (/^V:/.test(l)) { inVocal = false; return; }
+    if (inVocal && sec && !/^[A-Za-z]:/.test(l) && !/^%/.test(l) && l.trim()) sec.lines.push(i);
+  });
+  // lyric sections the score has no section for (e.g. a Pre-Chorus folded into the verse) join the one before
+  const scoreTags = new Set(sections.map(s => s.tag)), merged = [];
+  for (const x of lyr) { if (!scoreTags.has(x.tag) && merged.length) merged[merged.length - 1].lines.push(...x.lines); else merged.push({tag: x.tag, lines: [...x.lines]}); }
+  lyr = merged;
+  // vocal notes per section: {line, tied, brk (phrase starts here), bar}
+  for (const s of sections) {
+    s.notes = []; let brk = true, bar = 0, nbars = 0;
+    for (const li of s.lines) for (const t of noteTokens(lines[li])) {
+      if (t.bar) { bar++; continue; }
+      if (t.rest) { if (t.len >= 2) brk = true; continue; }
+      if (t.tied && s.notes.length) s.notes[s.notes.length - 1].held += t.len;   // a tie lengthens the sung note
+      s.notes.push({line: li, tied: t.tied, brk: brk && !t.tied, bar, held: t.len}); brk = false;
+    }
+    s.bars = bar;
+  }
+  // a phrase that starts in a section's last bar and runs to its end is a pickup into the next section
+  for (let k = 0; k < sections.length - 1; k++) {
+    const n = sections[k].notes; if (!n.length) continue;
+    let st = n.length - 1; while (st > 0 && !n[st].brk) st--;
+    if (n[st].bar >= sections[k].bars - 1) {
+      const pick = n.splice(st), next = sections[k + 1].notes;
+      if (next.length) next[0].brk = false;                               // pickup + first phrase sing one lyric line
+      next.unshift(...pick);
+    }
+  }
+  let lp = 0; const wlines = {};
+  for (const s of sections) {
+    const notes = s.notes;
+    if (!notes.some(n => !n.tied)) continue;                              // instrumental section
+    let j = lyr.findIndex((x, k) => k >= lp && x.tag === s.tag);
+    if (j < 0) j = lp < lyr.length ? lp : -1;
+    if (j < 0) break;
+    lp = j + 1;
+    const phrases = []; for (const n of notes) { if (n.brk || !phrases.length) phrases.push([]); phrases[phrases.length - 1].push(n); }
+    let lyrLines = lyr[j].lines;
+    // fewer phrases than lines (no rest between two sung lines): split the longest phrase after its longest held note
+    while (phrases.length < lyrLines.length) {
+      let pi = -1, best = 0;
+      phrases.forEach((ph, k) => { const n = ph.filter(x => !x.tied).length; if (n > best) { best = n; pi = k; } });
+      if (pi < 0 || best < 6) break;
+      const ph = phrases[pi]; let cut = -1, held = 0;
+      for (let k = 2; k < ph.length - 3; k++) {                          // keep at least ~3 notes on each side
+        if (ph[k].tied || ph[k + 1].tied) continue;
+        const mid = 1 - Math.abs(k / ph.length - 0.5);                    // prefer the middle on ties
+        if (ph[k].held + mid * 0.5 > held) { held = ph[k].held + mid * 0.5; cut = k + 1; }
+      }
+      if (cut < 0 || held < 2) break;                                     // no clearly held note: leave it
+      phrases.splice(pi, 1, ph.slice(0, cut), ph.slice(cut));
+    }
+    // more phrases than lines: merge the shortest neighbouring phrases; fewer: join lyric lines
+    while (phrases.length > lyrLines.length && phrases.length > 1) {
+      let best = 0; for (let k = 1; k < phrases.length - 1; k++) if (phrases[k].length + phrases[k + 1].length < phrases[best].length + phrases[best + 1].length) best = k;
+      phrases.splice(best, 2, phrases[best].concat(phrases[best + 1]));
+    }
+    if (lyrLines.length > phrases.length) lyrLines = lyrLines.slice(0, phrases.length - 1).concat(lyrLines.slice(phrases.length - 1).join(" "));
+    phrases.forEach((ph, k) => {
+      const syl = [];                                                     // {text, more: word continues}
+      for (const w of (lyrLines[k] || "").split(/\s+/).filter(Boolean)) {
+        const word = w.replace(/[-_*~|\\%"]/g, ""); if (!word) continue;
+        const parts = syllables(word); parts.forEach((p, i) => syl.push({text: p, more: i < parts.length - 1}));
+      }
+      const slots = ph.filter(n => !n.tied);
+      while (syl.length > slots.length && syl.length > 1) {               // too many syllables: double up the shortest pairs
+        let best = 0, bl = 1e9;
+        for (let k = 0; k < syl.length - 1; k++) { const l = syl[k].text.length + syl[k + 1].text.length + (syl[k].more ? 0 : 2); if (l < bl) { bl = l; best = k; } }
+        const a = syl[best], b = syl[best + 1];
+        syl.splice(best, 2, {text: a.text + (a.more ? "" : "~") + b.text, more: b.more});
+      }
+      let si = 0;
+      for (const n of ph) {
+        const tok = n.tied ? "_" : si < syl.length ? syl[si].text + (syl[si++].more ? "-" : " ") : "_";
+        (wlines[n.line] = wlines[n.line] || []).push(tok);
+      }
+    });
+  }
+  const out = [];
+  lines.forEach((l, i) => { out.push(l); if (wlines[i]) out.push("w: " + wlines[i].map(t => t.endsWith("-") ? t : t.trim()).join(" ").replace(/- /g, "-")); });
+  return out.join("\n");
+}
+
 // ---------------- score: the ABC YuE2 composed, rendered with abcjs, current bar highlighted
 // YuE2 sings to its score's tempo (audio length matches the score to within ~1-2 %), so bar = elapsed / bar length.
 let sc = {id: null, barSec: 0, bars: [], sections: [], cur: -1, req: 0};
@@ -742,11 +908,22 @@ async function loadScore(t) {
     $("scoreEmpty").textContent = abc ? "Sheet-music renderer didn't load (no internet?)." : "No score for this song."; return;
   }
   $("scoreEmpty").hidden = true;
-  const p = prepAbc(abc); sc.sections = p.sections; sc.barSec = barSeconds(abc);
+  sc.abc = abc; sc.lyrics = t.mode !== "instrumental" ? t.lyrics : "";
+  renderScore();
+}
+function renderScore() {
+  const abc = sc.abc, t = current; if (!abc || !t) return;
+  let src = abc, withLyrics = false;
+  if ($("scoreLyrics").checked && sc.lyrics) { try { src = alignLyrics(abc, sc.lyrics); withLyrics = true; } catch (e) { console.warn("lyric alignment failed", e); } }
+  const p = prepAbc(src); sc.sections = p.sections; sc.barSec = barSeconds(abc);
+  if (withLyrics) p.abc = p.abc.replace(/name="Vocal Melody" snm="Vocal"/, 'name="Voc." snm="Voc."').replace(/name="Ins Melody" snm="Inst."/, 'name="Ins." snm="Ins."');
   const k = (abc.match(/^K:\s*(\S+)/m) || [])[1], q = (abc.match(/^Q:.*=\s*(\d+)/m) || [])[1], m = (abc.match(/^M:\s*(\S+)/m) || [])[1];
   $("scoreMeta").textContent = `${t.title}${k ? " · key " + k : ""}${m ? " · " + m : ""}${q ? " · ♩=" + q : ""}`;
-  ABCJS.renderAbc("scoreSheet", p.abc, {responsive: "resize", add_classes: true, paddingtop: 6, paddingbottom: 6, paddingleft: 6, paddingright: 6,
-                                   format: {gchordfont: "Helvetica 13", annotationfont: "Helvetica 12 bold", vocalfont: "Helvetica 11"}});
+  // with lyrics, let abcjs re-wrap lines so dense bars get room for their words (fewer bars per line)
+  const wrap = withLyrics ? {staffwidth: Math.max(320, $("score").clientWidth - 30), wrap: {minSpacing: 1.5, maxSpacing: 2.6, preferredMeasuresPerLine: 3}} : {};
+  sc.wrapW = $("score").clientWidth;
+  ABCJS.renderAbc("scoreSheet", p.abc, {responsive: "resize", add_classes: true, paddingtop: 6, paddingbottom: 6, paddingleft: 6, paddingright: 6, ...wrap,
+                                   format: {gchordfont: "Helvetica 13", annotationfont: "Helvetica 12 bold", vocalfont: "Helvetica 12", vocalspace: 16}});
   // bar index -> SVG elements. abcjs's running "mm" numbers drift when the Ins voice uses multi-bar rests (Z4),
   // so count bars from the vocal voice (v0): per staff line (l) its measures (m), in order.
   const byKey = {}, vocal = {};
@@ -759,7 +936,7 @@ async function loadScore(t) {
   });
   sc.bars = [];
   Object.keys(vocal).map(Number).sort((a, b) => a - b).forEach(l => [...vocal[l]].sort((a, b) => a - b).forEach(m => sc.bars.push(byKey[l + ":" + m])));
-  sc.line = -1; $("score").scrollTop = 0;
+  sc.line = -1; sc.cur = -1; $("score").scrollTop = 0;
 }
 function scoreTick(el) {
   if (!sc.bars.length || !sc.barSec || el == null || !scoreOpen()) return;
@@ -789,6 +966,9 @@ function applyScoreOpen() {
 }
 $("scoreToggle").onclick = () => { store.set("scoreOpen", !scoreOpen()); applyScoreOpen(); };
 $("scoreFollow").checked = store.get("scoreFollow", true);
+$("scoreLyrics").checked = store.get("scoreLyrics", true);
+$("scoreLyrics").onchange = () => { store.set("scoreLyrics", $("scoreLyrics").checked); renderScore(); };
+let rewrapT; window.addEventListener("resize", () => { clearTimeout(rewrapT); rewrapT = setTimeout(() => { if (sc.abc && Math.abs($("score").clientWidth - (sc.wrapW || 0)) > 40) renderScore(); }, 400); });
 $("scoreFollow").onchange = () => { store.set("scoreFollow", $("scoreFollow").checked); if ($("scoreFollow").checked) { userScrolledAt = 0; followScroll((sc.bars[sc.cur] || [])[0], true); } };
 applyScoreOpen();
 // ---------------- favorites: every kept song, all stations
