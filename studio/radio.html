@@ -10,6 +10,7 @@
 <meta name="theme-color" content="#1b1c1f">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Share+Tech+Mono&family=Oswald:wght@500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/abcjs@6.7.1/dist/abcjs-basic-min.js" defer></script>
 <style>
 :root {
   --bg: #e9e6df; --text: #1d1d1f; --muted: #6b6860; --panel: #f7f5f0; --line: #d6d1c6;
@@ -139,6 +140,18 @@ h2 { font-size: 15px; margin: 0 0 10px; }
 .btn { font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
 .btn.primary { background: var(--red); border-color: var(--red); color: #fff; font-weight: 600; }
 .btn.danger { color: var(--red); }
+.scorep { margin-top: 18px; }
+.scorep h2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0; }
+.scorep h2 .sec { font: 600 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; background: var(--red); color: #fff; }
+.scorep h2 .sec:empty { display: none; }
+.scorep h2 .meta { color: var(--muted); font-weight: 400; font-size: 13px; }
+.scorep h2 .ctl { margin-left: auto; display: flex; gap: 10px; align-items: center; font-weight: 400; font-size: 13px; }
+.scorep.closed #score, .scorep.closed .ctl label { display: none; }
+#score { margin-top: 10px; max-height: 420px; overflow: auto; color: var(--text); border-top: 1px solid var(--line); padding-top: 4px; scroll-behavior: smooth; }
+#score svg { display: block; }
+#score .now { fill: var(--red); stroke: var(--red); }
+#score .abcjs-annotation { fill: var(--red); font-weight: 700; }
+#score .empty { padding: 16px 0; color: var(--muted); font-size: 14px; }
 .favs { margin-top: 16px; }
 .favs h2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .favs h2 .n { color: var(--muted); font-weight: 500; }
@@ -350,6 +363,12 @@ input[type=text], textarea, select { width: 100%; font: inherit; color: var(--te
     <audio id="audio" preload="auto" crossorigin="anonymous"></audio>
   </section>
 
+  <section class="panel scorep" id="scorePanel">
+    <h2>🎼 Score <span class="sec" id="scoreSec"></span><span class="meta" id="scoreMeta"></span>
+      <span class="ctl"><label><input type="checkbox" id="scoreFollow" checked> follow along</label>
+        <button class="btn" id="scoreToggle" aria-expanded="true">Hide</button></span></h2>
+    <div id="score"><div class="empty">The score YuE2 composed appears here when a song is on air — melody, chords and song sections, with the bar being played highlighted.</div></div>
+  </section>
   <div class="cols">
     <section class="panel">
       <h2>Stations <button class="btn" id="newStation" style="float:right">+ New station</button></h2>
@@ -509,6 +528,7 @@ function vuLoop(now) {
   const pos = streamPos(), dur = current ? (current.duration || current.seconds || 0) : 0;
   const el = current && pos != null ? Math.max(0, pos - current.start_pos) : 0;
   $("vCounter").textContent = current ? `${mmss(el)} / ${mmss(dur)}` : "00:00 / 00:00";
+  scoreTick(current && pos != null ? el : null);
   requestAnimationFrame(vuLoop);
 }
 // ---------------- playback: one shared live broadcast — every client hears the same song
@@ -545,7 +565,7 @@ function syncNow() {
   if (lid && !h && R) hint(R.on ? firstWaitHint(9) : "The radio is off — press POWER or PLAY.");
 }
 function showTrack(t) {
-  current = t;
+  current = t; loadScore(t);
   $("vTitle").textContent = t ? t.title.toUpperCase() : lid ? "— DEAD AIR · NEXT SONG ON THE WAY —" : "PICK A STATION · PRESS PLAY";
   const box = $("vTitleBox"); box.classList.remove("scroll");
   box.classList.toggle("scroll", $("vTitle").offsetWidth > box.clientWidth);      // marquee only when it doesn't fit
@@ -680,6 +700,84 @@ async function loadHistory() {
   $("hist").innerHTML = r.tracks.length ? r.tracks.map(t => `<li><span>${t.feedback === "keep" ? "♥" : t.feedback === "dislike" ? "✕" : t.feedback === "skip" ? "⏭" : "♪"}</span>
     <div class="t"><div>${esc(t.title)}</div><div>${esc(t.style)}</div></div><a class="btn" href="${t.audio}?download=1" title="Download">⬇</a></li>`).join("") : `<li class="muted">Nothing played on this station yet.</li>`;
 }
+// ---------------- score: the ABC YuE2 composed, rendered with abcjs, current bar highlighted
+// YuE2 sings to its score's tempo (audio length matches the score to within ~1-2 %), so bar = elapsed / bar length.
+let sc = {id: null, barSec: 0, bars: [], sections: [], cur: -1, req: 0};
+const scoreOpen = () => store.get("scoreOpen", true);
+function prepAbc(abc) {
+  // "% verse" comments -> a "^Verse" annotation on the next vocal bar, and a list of [startBar, name] for the header
+  const out = [], sections = []; let pending = null, inVocal = false, vbars = 0;
+  for (const line of abc.split("\n")) {
+    const c = line.match(/^%\s*(\w[\w -]*)\s*$/);
+    if (c) { pending = c[1].replace(/\b\w/g, m => m.toUpperCase()); continue; }
+    if (/^V:\s*Vocal\b/.test(line)) { inVocal = true; out.push(line); continue; }
+    if (/^V:/.test(line)) { inVocal = false; out.push(line); continue; }
+    if (/^T:\s*$/.test(line)) continue;
+    if (inVocal && /^[^A-Za-z%]*[|A-Ga-gz"\[^_=]/.test(line) && !/^[A-Za-z]:/.test(line)) {
+      if (pending) { sections.push([vbars, pending]); out.push(`"^${pending}"` + line); pending = null; }
+      else out.push(line);
+      vbars += (line.match(/\|/g) || []).length; continue;
+    }
+    out.push(line);
+  }
+  return {abc: out.join("\n"), sections};
+}
+function barSeconds(abc) {
+  const q = abc.match(/^Q:\s*(\d+)\/(\d+)\s*=\s*(\d+)/m), m = abc.match(/^M:\s*(\d+)\/(\d+)/m);
+  if (!q || !m) return 0;
+  const qpm = +q[3] * (+q[1] / +q[2]) / 0.25, barQ = +m[1] * 4 / +m[2];
+  return barQ * 60 / qpm;
+}
+async function loadScore(t) {
+  const req = ++sc.req;
+  if (!t) { sc = {...sc, id: null, cur: -1}; $("scoreMeta").textContent = ""; $("scoreSec").textContent = ""; return; }
+  if (t.id === sc.id) return;
+  sc.id = t.id; sc.cur = -1; $("scoreMeta").textContent = t.title; $("scoreSec").textContent = "";
+  let abc = null;
+  try { const r = await fetch(`/files/${encodeURIComponent(t.id)}/score.abc`); if (r.ok) abc = await r.text(); } catch {}
+  for (let i = 0; abc && !window.ABCJS && i < 50; i++) await new Promise(r => setTimeout(r, 100));   // abcjs loads deferred
+  if (req !== sc.req) return;
+  if (!abc || !window.ABCJS) { $("score").innerHTML = `<div class="empty">${abc ? "Sheet-music renderer didn't load (no internet?)." : "No score for this song."}</div>`; return; }
+  const p = prepAbc(abc); sc.sections = p.sections; sc.barSec = barSeconds(abc);
+  const k = (abc.match(/^K:\s*(\S+)/m) || [])[1], q = (abc.match(/^Q:.*=\s*(\d+)/m) || [])[1], m = (abc.match(/^M:\s*(\S+)/m) || [])[1];
+  $("scoreMeta").textContent = `${t.title}${k ? " · key " + k : ""}${m ? " · " + m : ""}${q ? " · ♩=" + q : ""}`;
+  ABCJS.renderAbc("score", p.abc, {responsive: "resize", add_classes: true, paddingtop: 6, paddingbottom: 6, paddingleft: 6, paddingright: 6,
+                                   format: {gchordfont: "Helvetica 13", annotationfont: "Helvetica 12 bold", vocalfont: "Helvetica 11"}});
+  // bar index -> SVG elements. abcjs's running "mm" numbers drift when the Ins voice uses multi-bar rests (Z4),
+  // so count bars from the vocal voice (v0): per staff line (l) its measures (m), in order.
+  const byKey = {}, vocal = {};
+  document.querySelectorAll("#score [class*='abcjs-l']").forEach(el => {
+    const c = el.classList, get = (re) => { for (const x of c) { const m = x.match(re); if (m) return +m[1]; } return null; };
+    const l = get(/^abcjs-l(\d+)$/), m = get(/^abcjs-m(\d+)$/), v = get(/^abcjs-v(\d+)$/);
+    if (l == null || m == null) return;
+    (byKey[l + ":" + m] = byKey[l + ":" + m] || []).push(el);
+    if (v === 0) (vocal[l] = vocal[l] || new Set()).add(m);
+  });
+  sc.bars = [];
+  Object.keys(vocal).map(Number).sort((a, b) => a - b).forEach(l => [...vocal[l]].sort((a, b) => a - b).forEach(m => sc.bars.push(byKey[l + ":" + m])));
+  $("score").scrollTop = 0;
+}
+function scoreTick(el) {
+  if (!sc.bars.length || !sc.barSec || el == null || !scoreOpen()) return;
+  const bar = Math.min(sc.bars.length - 1, Math.floor(el / sc.barSec));
+  if (bar === sc.cur) return;
+  (sc.bars[sc.cur] || []).forEach(e => e.classList.remove("now"));
+  sc.cur = bar; const els = sc.bars[bar] || []; els.forEach(e => e.classList.add("now"));
+  let name = ""; for (const [b, n] of sc.sections) if (b <= bar) name = n; $("scoreSec").textContent = name;
+  if ($("scoreFollow").checked && els[0]) {
+    const box = $("score"), r = els[0].getBoundingClientRect(), br = box.getBoundingClientRect();
+    if (r.top < br.top + 20 || r.bottom > br.bottom - 20) box.scrollTop += r.top - br.top - box.clientHeight / 3;
+  }
+}
+function applyScoreOpen() {
+  const open = scoreOpen(); $("scorePanel").classList.toggle("closed", !open);
+  $("scoreToggle").textContent = open ? "Hide" : "Show"; $("scoreToggle").setAttribute("aria-expanded", open);
+  if (open) sc.cur = -1;
+}
+$("scoreToggle").onclick = () => { store.set("scoreOpen", !scoreOpen()); applyScoreOpen(); };
+$("scoreFollow").checked = store.get("scoreFollow", true);
+$("scoreFollow").onchange = () => store.set("scoreFollow", $("scoreFollow").checked);
+applyScoreOpen();
 // ---------------- favorites: every kept song, all stations
 let favTracks = [], favOff = new Set(), favSig = "";
 async function loadFavorites() {
