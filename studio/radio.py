@@ -20,6 +20,7 @@ RADIO = None
 lock = threading.RLock()
 stations: dict[str, dict] = {}
 state = {"on": False, "station": None, "target_ahead": 4, "max_inflight": 2}
+PRUNE_REJECTED_AFTER = 12 * 3600    # rejected takes stay this long (they can air as runner-up filler), then go
 RERUNS = "__reruns__"               # pseudo-station: replays songs from every station, generates nothing
 
 
@@ -469,10 +470,27 @@ def inflight(sid):
     return n + writing.get(sid, 0)
 
 
+def prune_rejected():
+    """Remove rejected takes whose runner-up window has passed (only takes marked with prune_after; never aired ones)."""
+    now = time.time()
+    with app.lock:
+        due = [j for j in app.jobs.values() if j.get("source") == "radio" and j.get("radio_status") == "rejected"
+               and not j.get("played_at") and j.get("prune_after") and j["prune_after"] < now]
+        for j in due:
+            app.jobs.pop(j["id"], None)
+    for j in due:
+        shutil.rmtree(app.DATA / j["id"], ignore_errors=True)
+    if due:
+        app.log(f"radio: removed {len(due)} rejected take(s) past the {PRUNE_REJECTED_AFTER // 3600} h runner-up window")
+
+
 def spool_loop():
+    last_prune = 0.0
     while True:
         try:
             time.sleep(2)
+            if time.time() - last_prune > 600:
+                last_prune = time.time(); prune_rejected()
             if time.time() - state.get("heartbeat", 0) > 20:
                 save_state()                               # heartbeat: lets a quick restart resume the broadcast
             sid = state["station"]
@@ -588,6 +606,8 @@ def judge(job):
             save_station(s)
         job.update(radio_status=verdict, critic={"score": round(score, 4), "bar": round(bar, 4), "sane": sane, "dup": round(dup, 3)},
                    approved_at=time.time())
+        if verdict == "rejected":
+            job["prune_after"] = time.time() + PRUNE_REJECTED_AFTER     # runner-up filler window, then it is removed
         app.save_job(job)
         app.log("radio critic", job["title"], verdict, round(score, 3), "bar", round(bar, 3))
     except Exception:

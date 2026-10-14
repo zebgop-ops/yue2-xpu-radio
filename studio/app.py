@@ -314,6 +314,7 @@ def run_job(pipe, base, job, update, cancelled):
            "-metadata", f"title={job['title']}", "-metadata", "artist=YuE2 on b70", str(d / "song.mp3"))
         if (d / "song.mp3").stat().st_size > 10_000:
             (out / "audio.flac").unlink()
+            (out / "latent.npy").unlink(missing_ok=True)       # only needed to re-decode; ~1.4 MB per song
         result = json.loads((out / "result.json").read_text())
         gen = round(time.time() - t0, 1)
         update(status="done", stage="", finished=time.time(), seconds=result.get("audio_seconds"),
