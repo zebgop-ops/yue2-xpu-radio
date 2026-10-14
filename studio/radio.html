@@ -147,7 +147,7 @@ h2 { font-size: 15px; margin: 0 0 10px; }
 .scorep h2 .meta { color: var(--muted); font-weight: 400; font-size: 13px; }
 .scorep h2 .ctl { margin-left: auto; display: flex; gap: 10px; align-items: center; font-weight: 400; font-size: 13px; }
 .scorep.closed #score, .scorep.closed .ctl label { display: none; }
-#score { margin-top: 10px; max-height: 420px; overflow: auto; color: var(--text); border-top: 1px solid var(--line); padding-top: 4px; scroll-behavior: smooth; }
+#score { margin-top: 10px; max-height: 440px; overflow-y: auto; overscroll-behavior: contain; color: var(--text); border-top: 1px solid var(--line); padding-top: 4px; scroll-behavior: smooth; }
 #score svg { display: block; }
 #score .now { fill: var(--red); stroke: var(--red); }
 #score .abcjs-annotation { fill: var(--red); font-weight: 700; }
@@ -367,7 +367,7 @@ input[type=text], textarea, select { width: 100%; font: inherit; color: var(--te
     <h2>🎼 Score <span class="sec" id="scoreSec"></span><span class="meta" id="scoreMeta"></span>
       <span class="ctl"><label><input type="checkbox" id="scoreFollow" checked> follow along</label>
         <button class="btn" id="scoreToggle" aria-expanded="true">Hide</button></span></h2>
-    <div id="score"><div class="empty">The score YuE2 composed appears here when a song is on air — melody, chords and song sections, with the bar being played highlighted.</div></div>
+    <div id="score"><div id="scoreSheet"></div><div class="empty" id="scoreEmpty">The score YuE2 composed appears here when a song is on air — melody, chords and song sections, with the bar being played highlighted.</div></div>
   </section>
   <div class="cols">
     <section class="panel">
@@ -737,11 +737,15 @@ async function loadScore(t) {
   try { const r = await fetch(`/files/${encodeURIComponent(t.id)}/score.abc`); if (r.ok) abc = await r.text(); } catch {}
   for (let i = 0; abc && !window.ABCJS && i < 50; i++) await new Promise(r => setTimeout(r, 100));   // abcjs loads deferred
   if (req !== sc.req) return;
-  if (!abc || !window.ABCJS) { $("score").innerHTML = `<div class="empty">${abc ? "Sheet-music renderer didn't load (no internet?)." : "No score for this song."}</div>`; return; }
+  if (!abc || !window.ABCJS) {
+    $("scoreSheet").innerHTML = ""; $("scoreEmpty").hidden = false;
+    $("scoreEmpty").textContent = abc ? "Sheet-music renderer didn't load (no internet?)." : "No score for this song."; return;
+  }
+  $("scoreEmpty").hidden = true;
   const p = prepAbc(abc); sc.sections = p.sections; sc.barSec = barSeconds(abc);
   const k = (abc.match(/^K:\s*(\S+)/m) || [])[1], q = (abc.match(/^Q:.*=\s*(\d+)/m) || [])[1], m = (abc.match(/^M:\s*(\S+)/m) || [])[1];
   $("scoreMeta").textContent = `${t.title}${k ? " · key " + k : ""}${m ? " · " + m : ""}${q ? " · ♩=" + q : ""}`;
-  ABCJS.renderAbc("score", p.abc, {responsive: "resize", add_classes: true, paddingtop: 6, paddingbottom: 6, paddingleft: 6, paddingright: 6,
+  ABCJS.renderAbc("scoreSheet", p.abc, {responsive: "resize", add_classes: true, paddingtop: 6, paddingbottom: 6, paddingleft: 6, paddingright: 6,
                                    format: {gchordfont: "Helvetica 13", annotationfont: "Helvetica 12 bold", vocalfont: "Helvetica 11"}});
   // bar index -> SVG elements. abcjs's running "mm" numbers drift when the Ins voice uses multi-bar rests (Z4),
   // so count bars from the vocal voice (v0): per staff line (l) its measures (m), in order.
@@ -755,7 +759,7 @@ async function loadScore(t) {
   });
   sc.bars = [];
   Object.keys(vocal).map(Number).sort((a, b) => a - b).forEach(l => [...vocal[l]].sort((a, b) => a - b).forEach(m => sc.bars.push(byKey[l + ":" + m])));
-  $("score").scrollTop = 0;
+  sc.line = -1; $("score").scrollTop = 0;
 }
 function scoreTick(el) {
   if (!sc.bars.length || !sc.barSec || el == null || !scoreOpen()) return;
@@ -764,19 +768,28 @@ function scoreTick(el) {
   (sc.bars[sc.cur] || []).forEach(e => e.classList.remove("now"));
   sc.cur = bar; const els = sc.bars[bar] || []; els.forEach(e => e.classList.add("now"));
   let name = ""; for (const [b, n] of sc.sections) if (b <= bar) name = n; $("scoreSec").textContent = name;
-  if ($("scoreFollow").checked && els[0]) {
-    const box = $("score"), r = els[0].getBoundingClientRect(), br = box.getBoundingClientRect();
-    if (r.top < br.top + 20 || r.bottom > br.bottom - 20) box.scrollTop += r.top - br.top - box.clientHeight / 3;
-  }
+  // auto-scroll: whenever the song moves to a new staff line, glide it to near the top of the box
+  const line = els[0] ? +([...els[0].classList].find(c => /^abcjs-l\d+$/.test(c)) || "abcjs-l-1").slice(7) : -1;
+  if (line !== sc.line) { sc.line = line; followScroll(els[0]); }
 }
+let userScrolledAt = 0;
+function followScroll(el, force) {
+  if (!el || !$("scoreFollow").checked || (!force && Date.now() - userScrolledAt < 10000)) return;
+  const box = $("score"), sys = el.closest("svg") ? el : null; if (!sys) return;
+  const r = el.getBoundingClientRect(), br = box.getBoundingClientRect();
+  box.scrollTo({top: Math.max(0, box.scrollTop + r.top - br.top - 70), behavior: "smooth"});   // keep the chord row above it visible
+}
+// you scrolled the score yourself: stop following for 10 s, then catch up
+["wheel", "touchmove", "keydown"].forEach(ev => $("score").addEventListener(ev, () => { userScrolledAt = Date.now(); }, {passive: true}));
+setInterval(() => { if (sc.cur >= 0 && userScrolledAt && Date.now() - userScrolledAt > 10000) { userScrolledAt = 0; followScroll((sc.bars[sc.cur] || [])[0], true); } }, 1000);
 function applyScoreOpen() {
   const open = scoreOpen(); $("scorePanel").classList.toggle("closed", !open);
   $("scoreToggle").textContent = open ? "Hide" : "Show"; $("scoreToggle").setAttribute("aria-expanded", open);
-  if (open) sc.cur = -1;
+  if (open) { sc.cur = -1; sc.line = -1; }
 }
 $("scoreToggle").onclick = () => { store.set("scoreOpen", !scoreOpen()); applyScoreOpen(); };
 $("scoreFollow").checked = store.get("scoreFollow", true);
-$("scoreFollow").onchange = () => store.set("scoreFollow", $("scoreFollow").checked);
+$("scoreFollow").onchange = () => { store.set("scoreFollow", $("scoreFollow").checked); if ($("scoreFollow").checked) { userScrolledAt = 0; followScroll((sc.bars[sc.cur] || [])[0], true); } };
 applyScoreOpen();
 // ---------------- favorites: every kept song, all stations
 let favTracks = [], favOff = new Set(), favSig = "";
