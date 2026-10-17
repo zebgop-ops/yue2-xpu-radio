@@ -225,7 +225,7 @@ input[type=text], textarea, select { width: 100%; font: inherit; color: var(--te
     <span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <a class="chip" id="lisChip" href="/radio/stream.mp3" target="_blank" style="text-decoration:none" title="Live stream URL — open it in VLC, a phone, or another browser; everyone hears the same broadcast">📡 0 listening</a>
       <span class="chip" id="gpuChip">…</span>
-      <a href="/" class="chip" style="text-decoration:none">🎵 Studio</a>
+      <a href="/" class="chip" id="studioChip" style="text-decoration:none">🎵 Studio</a>
     </span>
   </header>
 
@@ -725,6 +725,7 @@ async function refresh() {
     prevOn = R.on;
     const n = R.stream ? R.stream.listeners : 0;
     $("lisChip").textContent = `📡 ${n} listening · slot ${slot}`; $("lisChip").href = `/radio/stream.mp3?ch=${slot}`;
+    $("studioChip").hidden = !!R.viewer.public;          // the Studio isn't published on the internet
     renderSlots(); renderShelf(); renderDeck();
     const ctl = canCtl();
     ["kPower", "kSkip", "kDislike"].forEach(id => { $(id).disabled = !ctl; $(id).title = ctl ? "" : "Only this slot's owner can do that"; });
@@ -1152,10 +1153,10 @@ function openStation(id) {
     ${p ? `<p class="small"><b>Learned:</b> ${esc(p.top.genre.join(", "))}<br><b>Moods:</b> ${esc(p.top.mood.join(", "))}<br><b>Instruments:</b> ${esc(p.top.instrument.join(", "))}<br>
       <b>Tempo:</b> ${p.bpm_range ? p.bpm_range.join("–") + " BPM" : "?"} · <b>Vocals:</b> ${Math.round(p.vocal_share * 100)}% · ${p.tracks} songs</p>` : ""}
     <p class="small muted">Generated ${s.stats.generated} · approved ${s.stats.approved} · rejected by the critic ${s.stats.rejected} · played ${s.stats.played} · kept ${s.stats.kept} · disliked ${s.stats.disliked}</p>
-    ${s.kind === "folder" ? folderTools(s) : ""}
+    ${s.kind === "folder" ? ((R.viewer.manage || []).includes(s.id) ? folderTools(s) : `<p class="small muted">Only the host or whoever made this station can add songs to it.</p>`) : ""}
     ${R.viewer && R.viewer.owner ? `<div style="display:flex;gap:8px;margin-top:12px"><button class="btn danger" id="delSt">Delete station</button></div>` : ""}`);
   if ($("delSt")) $("delSt").onclick = async () => { if (!confirm(`Delete "${s.name}" and its songs?`)) return; await api(`/api/radio/stations/${s.id}`, {method: "DELETE"}); if (selected === s.id) { selected = null; store.set("station", null); } $("dlg").close(); shelfSig = ""; refresh(); };
-  if (s.kind === "folder") wireFolderTools(s);
+  if (s.kind === "folder" && $("drop")) wireFolderTools(s);
 }
 function folderTools(s) {
   return `<div class="drop" id="drop">Drop songs here (mp3, flac, wav, ogg, m4a) or <label style="color:var(--red);cursor:pointer"><input type="file" id="files" multiple accept="audio/*" hidden>choose files</label><div class="small" id="upl">${s.files || 0} songs uploaded</div><div class="prog" hidden id="uplBar"><i style="width:0"></i></div></div>
@@ -1180,6 +1181,7 @@ function wireFolderTools(s) {
   $("analyze").onclick = async () => { await post(`/api/radio/stations/${s.id}/analyze`).catch(e => ($("anaStat").textContent = e.message)); $("anaStat").textContent = "Learning… (about a second per song after a short warm-up)"; };
 }
 $("newStation").onclick = () => {
+  if (R && R.viewer && !R.viewer.can_create) return hint("Claim a free slot above first — then you can make your own stations.");
   openDialog("New station", `<div class="seg" role="group"><button type="button" data-k="text" aria-pressed="true">Describe it</button><button type="button" data-k="folder" aria-pressed="false">Learn from my music</button></div>
     <label class="f" for="nName">Name</label><input type="text" id="nName" maxlength="60" placeholder="e.g. Sunday Morning Jazz">
     <label class="f" for="nDesc">Sound <span id="nDescHint">— genres, moods, instruments, era, vocals</span></label>

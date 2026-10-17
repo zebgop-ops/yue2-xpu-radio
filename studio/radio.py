@@ -156,7 +156,23 @@ def save_station(s):
     tmp = d / "station.json.tmp"; tmp.write_text(json.dumps(s, indent=1)); tmp.replace(d / "station.json")
 
 
-def create_station(body):
+GUEST_STATIONS_MAX = 30             # stations guests may have in total
+GUEST_STATIONS_PER_DAY = 3          # per visitor address
+UPLOAD_MAX_BYTES = 50 * 2**20       # per uploaded song
+STATION_FILES_MAX, STATION_BYTES_MAX = 40, 2**30
+
+
+def create_station(body, h=None):
+    creator = None
+    if h is not None and not is_owner(h):           # guests: only while holding a slot, and within limits
+        n, tok = _claim_token(h)
+        ch = channels.get(n)
+        if not (ch and holds(h, ch)):
+            raise app.BadRequest("Claim a slot first — then you can make your own stations")
+        if sum(1 for x in stations.values() if x.get("created_by")) >= GUEST_STATIONS_MAX:
+            raise app.BadRequest("The shelf is full of guest stations right now — ask the host to tidy up")
+        rate_limit(h, "station", GUEST_STATIONS_PER_DAY, 86400, "You've made 3 stations today — that's the daily limit")
+        creator = {"name": ch.claim["name"], "claim_hash": ch.claim["token_hash"]}
     name = app.clean_text(body.get("name"), "Station name", 60, required=True)
     kind = body.get("kind", "text")
     if kind not in ("text", "folder"):
@@ -169,7 +185,8 @@ def create_station(body):
          "language": app.clean_text(body.get("language"), "Language", 40),
          "theme": app.clean_text(body.get("theme"), "Lyrics theme", 1000), "created": time.time(),
          "stats": {"generated": 0, "approved": 0, "rejected": 0, "played": 0, "kept": 0, "skipped": 0, "disliked": 0},
-         "feedback": [], "scores": [], "analysis": {"status": "none" if kind == "folder" else "n/a"}, "profile": None}
+         "feedback": [], "scores": [], "analysis": {"status": "none" if kind == "folder" else "n/a"}, "profile": None,
+         "created_by": creator}
     with lock:
         stations[s["id"]] = s
         save_station(s)
@@ -898,8 +915,10 @@ def is_owner(h):
 def login(h, password):
     if not owner_file().get("hash"):
         raise app.BadRequest("No owner password is set yet — run: python3 app.py --set-owner-password on the server")
+    rate_limit(h, "login-fail", 5, 900, "Too many wrong passwords — try again in 15 minutes", count=False)
     time.sleep(0.5)                                 # slow down guessing
     if not _check_password(password or ""):
+        rate_limit(h, "login-fail", 99, 900, "", count=True)
         raise app.BadRequest("Wrong password")
     tok = secrets.token_urlsafe(24)
     o = owner_file(); o["sessions"] = (o.get("sessions", []) + [_sha(tok)])[-20:]; _save_owner(o)
@@ -910,6 +929,45 @@ def logout(h):
     tok = _cookie(h, "radio_owner")
     if tok:
         o = owner_file(); o["sessions"] = [x for x in o.get("sessions", []) if x != _sha(tok)]; _save_owner(o)
+
+
+_hits = {}                          # (kind, address) -> recent timestamps
+
+
+def client_ip(h):
+    ip = h.client_address[0]
+    if ip in ("127.0.0.1", "::1") and h.headers.get("X-Forwarded-For"):   # behind the local HTTPS proxy
+        ip = h.headers["X-Forwarded-For"].split(",")[0].strip()
+    return ip
+
+
+def rate_limit(h, kind, limit, window, message, count=True):
+    key, now = (kind, client_ip(h)), time.time()
+    with lock:
+        recent = [t for t in _hits.get(key, []) if now - t < window]
+        if len(recent) >= limit:
+            _hits[key] = recent
+            raise app.BadRequest(message)
+        if count:
+            recent.append(now)
+        _hits[key] = recent
+        if len(_hits) > 5000:                       # forget old addresses
+            for k in [k for k, v in _hits.items() if not v or now - v[-1] > 86400]:
+                _hits.pop(k, None)
+
+
+def is_public(h):
+    return bool(h.headers.get("X-Public"))
+
+
+def can_manage(h, s):
+    """Upload to / re-analyze a station: the host, or the guest who made it (while they still hold their slot)."""
+    if is_owner(h):
+        return True
+    cb = (s or {}).get("created_by") or {}
+    n, _ = _claim_token(h)
+    ch = channels.get(n)
+    return bool(cb.get("claim_hash") and ch and holds(h, ch) and hmac.compare_digest(ch.claim["token_hash"], cb["claim_hash"]))
 
 
 def _claim_token(h):
@@ -941,6 +999,7 @@ def claim(h, n, name):
     name = re.sub(r"[^\w .'-]+", "", (name or "")).strip()[:24]
     if not name:
         raise app.BadRequest("Pick a nickname")
+    rate_limit(h, "claim", 6, 600, "Too many claims from here — wait a few minutes")
     with lock:
         if ch.claim and not holds(h, ch) and time.time() - ch.claim.get("seen", 0) < CLAIM_IDLE:
             raise app.BadRequest(f"Slot {ch.n} is taken by {ch.claim['name']}")
@@ -1031,7 +1090,9 @@ def api_state(h, listener=None, slot=1):
     return {"slot": ch.n, "on": ch.on, "station": ch.station, "target_ahead": state["target_ahead"], "stations": st,
             "making": making, "judging": judging, "gpu": app.state()["gpu"], "stream": stream_view(ch, listener),
             "reruns": rerun_library(), "channels": [channel_view(h, c) for c in channels.values()],
-            "viewer": {"owner": is_owner(h), "password_set": bool(owner_file().get("hash"))}}
+            "viewer": {"owner": is_owner(h), "password_set": bool(owner_file().get("hash")), "public": is_public(h),
+                       "can_create": is_owner(h) or any(holds(h, c) for c in channels.values()),
+                       "manage": [x["id"] for x in stations.values() if can_manage(h, x)]}}
 
 
 def _filler(sid):
@@ -1200,7 +1261,8 @@ def handle(h, method, path):
             return h.send(200, api_state(h, q.get("listener"), q.get("slot") or 1)) or True
         if method == "POST" and path == "/api/radio/login":
             tok = login(h, h.body().get("password"))
-            return h.send(200, {"ok": True}, extra={"Set-Cookie": f"radio_owner={tok}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax"}) or True
+            secure = "; Secure" if h.headers.get("X-Forwarded-Proto") == "https" else ""
+            return h.send(200, {"ok": True}, extra={"Set-Cookie": f"radio_owner={tok}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax{secure}"}) or True
         if method == "POST" and path == "/api/radio/logout":
             logout(h)
             return h.send(200, {"ok": True}, extra={"Set-Cookie": "radio_owner=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"}) or True
@@ -1221,7 +1283,7 @@ def handle(h, method, path):
         if method == "GET" and m:
             return h.send(200, {"tracks": history(m.group(1))}) or True
         if method == "POST" and path == "/api/radio/stations":
-            return h.send(200, {"station": create_station(h.body())}) or True
+            return h.send(200, {"station": create_station(h.body(), h)}) or True
         m = re.fullmatch(r"/api/radio/stations/([\w]+)", path)
         if method == "DELETE" and m:
             if not is_owner(h):
@@ -1234,12 +1296,21 @@ def handle(h, method, path):
             b = h.body(); return h.send(200, feedback(b.get("track", ""), b.get("kind", ""))) or True
         m = re.fullmatch(r"/api/radio/stations/([\w]+)/analyze", path)
         if method == "POST" and m:
+            if not can_manage(h, stations.get(m.group(1))):
+                return h.send(403, {"error": "Only the host or whoever made this station can do that"}) or True
             return h.send(200, start_analysis(m.group(1))) or True
         m = re.fullmatch(r"/api/radio/stations/([\w]+)/files/(.+)", path)
         if method == "PUT" and m:
             n = int(h.headers.get("Content-Length") or 0)
-            if n > 200 * 2**20:
-                raise app.BadRequest("File too large (200 MB max)")
+            st = stations.get(m.group(1))
+            if not can_manage(h, st):
+                return h.send(403, {"error": "Only the host or whoever made this station can add songs to it"}) or True
+            if n > UPLOAD_MAX_BYTES:
+                raise app.BadRequest("File too large (50 MB max per song)")
+            md = sdir(m.group(1)) / "music"
+            have = [f for f in md.rglob("*") if f.is_file()] if md.exists() else []
+            if len(have) >= STATION_FILES_MAX or sum(f.stat().st_size for f in have) + n > STATION_BYTES_MAX:
+                raise app.BadRequest(f"This station is full ({STATION_FILES_MAX} songs / 1 GB max)")
             from urllib.parse import unquote
             return h.send(200, upload(m.group(1), unquote(m.group(2)), h.rfile.read(n))) or True
     except app.BadRequest as e:
