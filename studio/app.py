@@ -21,7 +21,7 @@ DATA = Path(os.environ.get("STUDIO_DATA", "~/yue2/studio/library")).expanduser()
 DEVICES = [d.strip() for d in os.environ.get("STUDIO_DEVICES", os.environ.get("STUDIO_DEVICE", "xpu:0,xpu:1")).split(",") if d.strip()]
 DEVICE = DEVICES[0]
 RETURN_MINUTES = float(os.environ.get("STUDIO_RETURN_MINUTES", "0"))  # 0 = never auto-return
-LLM_UNIT = os.environ.get("STUDIO_LLM_UNIT", "vllm-qwen38.service")
+LLM_UNIT = os.environ.get("STUDIO_LLM_UNIT", "vllm-qwen38.service").strip()   # "" = no LLM shares these GPUs
 PORT = int(os.environ.get("STUDIO_PORT", "7860"))
 SKILL = Path(os.environ.get("STUDIO_INSTRUMENTAL", "~/yue2/YuE/skills/yue2-music/instrumental/scripts")).expanduser()
 MAX_QUEUED = 24
@@ -56,7 +56,7 @@ def sh(*cmd, timeout=180):
 
 
 def llm_active():
-    return sh("systemctl", "is-active", LLM_UNIT) in ("active", "activating")
+    return bool(LLM_UNIT) and sh("systemctl", "is-active", LLM_UNIT) in ("active", "activating")
 
 
 def save_job(job):
@@ -546,7 +546,7 @@ class Worker(threading.Thread):
         import radio
         if self.paused_llm and not llm_active() and radio.generating():
             log("radio resumed after a quick restart: leaving the LLM paused")
-        elif self.paused_llm and not llm_active():
+        elif self.paused_llm and not llm_active() and LLM_UNIT:
             log("recovering: restarting the LLM that a previous studio run paused")
             sh("sudo", "systemctl", "start", LLM_UNIT)
             self.paused_llm = False; write_gpu_state(False)
@@ -587,8 +587,8 @@ class Worker(threading.Thread):
                 gpu["idle_since"] = None
             elif self.holding() and gpu["idle_since"] is None:
                 gpu["idle_since"] = time.time()
-            want_release = self.holding() and not busy and not pend and (
-                gpu["release_requested"] or gpu["release_on_idle"] or
+            want_release = self.holding() and not busy and not pend and (      # no LLM to hand back to: keep YuE2 warm
+                gpu["release_requested"] or (gpu["release_on_idle"] and LLM_UNIT) or
                 (RETURN_MINUTES > 0 and gpu["idle_since"] and time.time() - gpu["idle_since"] > RETURN_MINUTES * 60))
         if want_release:
             self.release()
@@ -720,7 +720,7 @@ class Worker(threading.Thread):
             self.wait_vram(sl.index, 1024, 60, "the YuE2 process to free GPU memory")
         with lock:
             gpu["release_requested"] = gpu["release_on_idle"] = False; gpu["idle_since"] = None
-        if not llm_active():
+        if LLM_UNIT and not llm_active():
             log("starting", LLM_UNIT)
             sh("sudo", "systemctl", "start", LLM_UNIT)
         self.paused_llm = False; write_gpu_state(False)

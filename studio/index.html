@@ -452,6 +452,7 @@ function renderGpu(st) {
   el.className = "badge b-" + g.owner;
   el.innerHTML = `<span class="dot"></span><span>${esc(txt)}${g.owner === "studio" && g.idle_seconds_left != null ? ` · LLM returns automatically in ${mmss(g.idle_seconds_left)}` : ""}</span>`;
   $("release").hidden = !(g.owner === "studio" && !st.queue.length);
+  $("release").textContent = g.llm_unit ? "Give GPUs back to the LLM" : "Unload YuE2";
 }
 async function tick() {
   try {
@@ -588,7 +589,7 @@ $("clearForm").onclick = () => { if (!confirm("Clear style, lyrics and title?"))
 $("resetAdv").onclick = resetAdvanced;
 $("abcFile").onchange = async () => { const f = $("abcFile").files[0]; if (f) { $("abc").value = await f.text(); saveForm(); } };
 $("go").onclick = submit;
-$("release").onclick = async () => { if (!confirm("Unload YuE2 and restart the LLM? The LLM is back in about 1.5 minutes.")) return; const r = await (await fetch("/api/gpu/release", {method: "POST"})).json(); if (!r.ok) alert(r.message); tick(); };
+$("release").onclick = async () => { if (!confirm(lastState && lastState.gpu.llm_unit ? "Unload YuE2 and restart the LLM? The LLM is back in about 1.5 minutes." : "Unload YuE2 from the GPUs? The next song takes ~20 s longer to start.")) return; const r = await (await fetch("/api/gpu/release", {method: "POST"})).json(); if (!r.ok) alert(r.message); tick(); };
 $("search").oninput = () => { libSig = ""; lastState && renderLibrary(lastState); };
 $("filter").onchange = () => { libSig = ""; lastState && renderLibrary(lastState); };
 document.addEventListener("click", (e) => { const b = e.target.closest("[data-act]"); if (b) act(b.dataset.act, b.dataset.id); });
