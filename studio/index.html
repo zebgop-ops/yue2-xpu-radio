@@ -419,7 +419,7 @@ function renderQueue(st) {
     <div class="style" title="${esc(j.style)}">${esc(j.style)}</div>${progressBlock(j)}
     <div class="actions"><button class="btn small danger" data-act="cancel" data-id="${esc(j.id)}">Cancel</button></div></div>`).join("");
 }
-let libSig = "";
+let libSig = "", isOwner = false;     // only the host (logged in on the radio page) may delete songs
 function renderLibrary(st) {
   const mine = new Set(store.get("mine", [])), qtext = $("search").value.trim().toLowerCase(), f = $("filter").value;
   const items = st.library.filter(j => (f === "all" || (f === "mine" && mine.has(j.id)) || (f === "done" && j.status === "done") || (f === "failed" && j.status !== "done")) &&
@@ -441,7 +441,7 @@ function renderLibrary(st) {
         <button class="btn small" data-act="reuse" data-id="${id}" title="Load these settings into the form">Reuse</button>
         <button class="btn small" data-act="take" data-id="${id}" title="Same settings, new seed">New take</button>
         ${files.has("score.abc") ? `<button class="btn small" data-act="edit" data-id="${id}" title="Edit the melody/chords and render again">Edit score</button>` : ""}
-        <button class="btn small danger" data-act="delete" data-id="${id}">Delete</button>
+        ${isOwner ? `<button class="btn small danger" data-act="delete" data-id="${id}">Delete</button>` : ""}
       </div></div>`;
   }).join("");
 }
@@ -456,6 +456,7 @@ function renderGpu(st) {
 async function tick() {
   try {
     const st = await (await fetch("/api/state", {cache: "no-store"})).json();
+    const owner = !!(st.viewer && st.viewer.owner); if (owner !== isOwner) { isOwner = owner; libSig = ""; }
     lastState = st; renderGpu(st); renderQueue(st); renderLibrary(st); updateEta();
   } catch { $("gpu").innerHTML = `<span class="dot"></span><span>studio unreachable</span>`; }
 }

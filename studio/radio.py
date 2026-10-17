@@ -10,7 +10,7 @@ steers both the prompts and the critic.
 
 Everything runs on the CPU here (CLAP, librosa); the GPUs stay with YuE2.
 """
-import json, os, queue, random, re, shutil, subprocess, threading, time, traceback, urllib.request, uuid
+import hashlib, hmac, json, os, queue, random, re, secrets, shutil, subprocess, threading, time, traceback, urllib.request, uuid
 from pathlib import Path
 
 import numpy as np
@@ -19,14 +19,54 @@ app = None                          # the studio module, set by init()
 RADIO = None
 lock = threading.RLock()
 stations: dict[str, dict] = {}
-state = {"on": False, "station": None, "target_ahead": 4, "max_inflight": 2}
+state = {"target_ahead": 4}          # per-slot on/station live in `channels`
 PRUNE_REJECTED_AFTER = 12 * 3600    # rejected takes stay this long (they can air as runner-up filler), then go
 RERUNS = "__reruns__"               # pseudo-station: replays songs from every station, generates nothing
 
 
+NSLOTS = 4                          # slot 1 belongs to the owner (password); 2-4 are claimed by guests with a nickname
+CLAIM_IDLE = 15 * 60                # a guest's claim lapses after this long without their page open
+
+
+class Channel:
+    """One slot: its own station, power and live MP3 broadcast."""
+    def __init__(self, n):
+        self.n, self.on, self.station, self.claim = n, False, None, None     # claim: {"name", "token_hash", "seen"}
+        self.listeners, self.buf, self.bytes, self.epoch, self.last = {}, bytearray(), 0, 0.0, 0.0
+        self.now, self.aired = None, []
+        self.skip, self.wake, self.lock = threading.Event(), threading.Event(), threading.Lock()
+
+    def generating(self):
+        return self.on and self.station in stations
+
+
+channels = {n: Channel(n) for n in range(1, NSLOTS + 1)}
+
+
 def generating():
-    """True while the radio is on a real station (and so wants the GPUs); rerun mode leaves them to the LLM."""
-    return state["on"] and state["station"] in stations
+    """True while any slot is on a real station (and so wants the GPUs); rerun mode leaves them to the LLM."""
+    return any(ch.generating() for ch in channels.values())
+
+
+def urgent():
+    """Some generating slot has nothing approved to play next: don't hold its songs back to fill a batch."""
+    return any(not station_tracks(sid, ("approved",)) for sid in wanted())
+
+
+def wanted():
+    """station id -> number of slots generating for it"""
+    out = {}
+    for ch in channels.values():
+        if ch.generating():
+            out[ch.station] = out.get(ch.station, 0) + 1
+    return out
+
+
+def channel(n):
+    try:
+        return channels[int(n or 1)]
+    except (KeyError, ValueError, TypeError):
+        raise app.BadRequest("No such slot")
 writing = {}                        # station id -> number of specs being written right now
 backoff = {}                        # station id -> {"until": t, "delay": s, "reason": str}
 AUDIO_EXT = {".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aac", ".opus"}
@@ -58,12 +98,21 @@ def init(studio_module):
     RADIO = app.DATA.parent / "radio"
     (RADIO / "stations").mkdir(parents=True, exist_ok=True)
     try:
-        state.update(json.loads((RADIO / "state.json").read_text()))
+        saved = json.loads((RADIO / "state.json").read_text())
     except Exception:
-        pass
+        saved = {}
+    state["target_ahead"] = saved.get("target_ahead", 4)
+    slots = saved.get("channels") or {"1": {"on": saved.get("on"), "station": saved.get("station")}}   # pre-slots state file
     # resume only after a quick service restart (studio was alive < 2 min ago); after a reboot the radio starts off
-    state["on"] = bool(state.get("on")) and time.time() - (state.get("heartbeat") or 0) < 120 and state.get("station") is not None
-    if state["on"]:
+    quick = time.time() - (saved.get("heartbeat") or 0) < 120
+    for k, v in slots.items():
+        ch = channels.get(int(k))
+        if not ch:
+            continue
+        ch.station = v.get("station")
+        ch.on = bool(v.get("on")) and quick and ch.station is not None
+        ch.claim = v.get("claim") if quick else None
+    if any(ch.on for ch in channels.values()):
         app.log("radio: resuming the broadcast after a quick restart")
     for f in (RADIO / "stations").glob("*/station.json"):
         try:
@@ -81,12 +130,21 @@ def init(studio_module):
             create_station({"name": name, "kind": "text", "description": desc, "vocals": vocals})
     save_state()
     threading.Thread(target=spool_loop, daemon=True, name="radio-spool").start()
-    threading.Thread(target=playout_loop, daemon=True, name="radio-playout").start()
+    global SILENCE
+    try:
+        SILENCE = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+                                  "-t", "1.152", *ENCODE], capture_output=True, timeout=30).stdout
+    except Exception:
+        app.log("radio: could not make the silence frames:", traceback.format_exc())
+    for ch in channels.values():
+        threading.Thread(target=playout_loop, args=(ch,), daemon=True, name=f"radio-playout-{ch.n}").start()
 
 
 def save_state():
     state["heartbeat"] = time.time()
-    (RADIO / "state.json").write_text(json.dumps({k: state.get(k) for k in ("station", "target_ahead", "on", "heartbeat")}))
+    out = {"target_ahead": state["target_ahead"], "heartbeat": state["heartbeat"],
+           "channels": {str(ch.n): {"on": ch.on, "station": ch.station, "claim": ch.claim} for ch in channels.values()}}
+    tmp = RADIO / "state.json.tmp"; tmp.write_text(json.dumps(out)); tmp.replace(RADIO / "state.json")
 
 
 def sdir(sid):
@@ -123,8 +181,9 @@ def create_station(body):
 def delete_station(sid):
     with lock:
         s = stations.pop(sid, None)
-        if state["station"] == sid:
-            state["station"] = None; state["on"] = False
+        for ch in channels.values():
+            if ch.station == sid:
+                ch.station = None; ch.on = False
     if s:
         with app.lock:
             for j in list(app.jobs.values()):
@@ -366,7 +425,7 @@ def llm_candidates():
     """Reachable LLMs in order. While the radio is on, b70's own LLM is (or is about to be) paused for the
     GPUs, so the other servers go first."""
     cands = list(app.LYRICS_LLMS)
-    if state["on"] or app.gpu["owner"] != "llm":
+    if generating() or app.gpu["owner"] != "llm":
         cands.sort(key=lambda c: "localhost" in c[0] or "127.0.0.1" in c[0])
     out = []
     for base, model, label in cands:
@@ -423,7 +482,7 @@ def write_spec(s, short=False):
     if skips:
         u.append("Skipped (mildly less of this): " + "; ".join(f"[{f['style'][:60]}]" for f in skips))
     for base, model, label in [c for c in llm_candidates() for _ in range(3)]:     # each server gets two retries
-        if not state["on"]:
+        if s["id"] not in wanted():
             break
         try:
             body = {"model": model, "temperature": 1.0, "top_p": 0.95, "max_tokens": 2200,
@@ -493,36 +552,44 @@ def spool_loop():
                 last_prune = time.time(); prune_rejected()
             if time.time() - state.get("heartbeat", 0) > 20:
                 save_state()                               # heartbeat: lets a quick restart resume the broadcast
-            sid = state["station"]
-            if not state["on"] or sid not in stations:
-                continue
-            s = stations[sid]
-            if s["kind"] == "folder" and s["analysis"].get("status") != "done":
-                continue
-            b = backoff.get(sid)
-            if b and time.time() < b["until"]:
-                continue
-            with app.lock:
-                last = sorted((j for j in app.jobs.values() if j.get("source") == "radio" and j.get("station") == sid
-                               and j["status"] in ("done", "failed") and not (j.get("error") or "").startswith("Interrupted")),
-                              key=lambda j: -j.get("finished", 0))[:3]
-            if len(last) == 3 and all(j["status"] == "failed" for j in last) and not (b and b.get("seen") == last[0]["id"]):
-                delay = min(600, (b["delay"] * 2) if b else 60)
-                backoff[sid] = {"until": time.time() + delay, "delay": delay, "seen": last[0]["id"],
-                                "reason": (last[0].get("error") or "songs keep failing")[:160]}
-                app.log(f"radio: 3 failed takes in a row on {s['name']}; pausing generation {delay}s")
-                continue
-            if last and last[0]["status"] == "done":
-                backoff.pop(sid, None)
-            ready = len(station_tracks(sid, ("approved",)))
-            fly = inflight(sid)
-            limit = state["max_inflight"] + 1 if ready else 2 * len(app.DEVICES)     # spool empty: both GPUs flat out
-            if ready + fly < state["target_ahead"] and fly < limit:
-                with lock:
-                    writing[sid] = writing.get(sid, 0) + 1
-                threading.Thread(target=produce, args=(sid,), daemon=True).start()
+            expire_claims()
+            want = wanted(); total = sum(want.values())
+            for sid, nch in want.items():
+                spool_station(sid, nch, total)
         except Exception:
             app.log("radio spool error:", traceback.format_exc())
+
+
+def spool_station(sid, nch, total):
+    """Keep one station's spool topped up; nch = slots tuned to it, total = slots generating overall."""
+    s = stations[sid]
+    if s["kind"] == "folder" and s["analysis"].get("status") != "done":
+        return
+    b = backoff.get(sid)
+    if b and time.time() < b["until"]:
+        return
+    with app.lock:
+        last = sorted((j for j in app.jobs.values() if j.get("source") == "radio" and j.get("station") == sid
+                       and j["status"] in ("done", "failed") and not (j.get("error") or "").startswith("Interrupted")),
+                      key=lambda j: -j.get("finished", 0))[:3]
+    if len(last) == 3 and all(j["status"] == "failed" for j in last) and not (b and b.get("seen") == last[0]["id"]):
+        delay = min(600, (b["delay"] * 2) if b else 60)
+        backoff[sid] = {"until": time.time() + delay, "delay": delay, "seen": last[0]["id"],
+                        "reason": (last[0].get("error") or "songs keep failing")[:160]}
+        app.log(f"radio: 3 failed takes in a row on {s['name']}; pausing generation {delay}s")
+        return
+    if last and last[0]["status"] == "done":
+        backoff.pop(sid, None)
+    ready = len(station_tracks(sid, ("approved",)))
+    fly = inflight(sid)
+    # GPU capacity = batch size x cards; each station gets its slots' fair share (batches fill from all stations)
+    capacity = getattr(app, "BATCH", 1) * len(app.DEVICES)
+    limit = max(2, capacity * nch // max(1, total))
+    target = state["target_ahead"] * nch + 2
+    if ready + fly < target and fly < limit:
+        with lock:
+            writing[sid] = writing.get(sid, 0) + 1
+        threading.Thread(target=produce, args=(sid,), daemon=True).start()
 
 
 def produce(sid):
@@ -535,8 +602,8 @@ def produce(sid):
                        for j in app.jobs.values())
         short = not busy and not station_tracks(sid, ("approved",)) and writing.get(sid, 0) <= 1
         spec = write_spec(s, short=short)
-        if not state["on"] or state["station"] != sid:
-            app.log("radio: discarding a spec written after the radio was switched off / retuned")
+        if sid not in wanted():
+            app.log("radio: discarding a spec written after every slot left this station")
             return
         body = {"mode": "instrumental" if spec["instrumental"] else "song", "title": spec["title"], "author": "radio",
                 "style": spec["style"], "lyrics": spec["lyrics"], "cot": "full", "max_seconds": 150 if short else 300}   # a safety cap only: songs should end on their own
@@ -624,49 +691,48 @@ FRAME = 576                         # 144 * 192000 / 48000: every frame is exact
 BURST = 4 * BPS // FRAME * FRAME   # ~4 s, whole frames: new listeners get it at once so playback starts immediately
 ENCODE = ["-vn", "-ac", "2", "-ar", "48000", "-c:a", "libmp3lame", "-b:a", "192k", "-id3v2_version", "0",
           "-write_xing", "0", "-map_metadata", "-1", "-f", "mp3", "pipe:1"]
-bc = {"listeners": {}, "buf": bytearray(), "bytes": 0, "epoch": 0.0, "now": None, "aired": [],
-      "skip": threading.Event(), "wake": threading.Event(), "silence": b"", "last": 0.0}
-bc_lock = threading.Lock()
+SILENCE = b""
 
 
-def _broadcast(chunk):
+def _broadcast(ch, chunk):
     """Pace the stream at real time (bytes sent == elapsed seconds * BPS), then fan the chunk out to listeners."""
-    ahead = (bc["bytes"] + len(chunk)) / BPS - (time.time() - bc["epoch"])
+    ahead = (ch.bytes + len(chunk)) / BPS - (time.time() - ch.epoch)
     if ahead > 0:
         time.sleep(ahead)
-    with bc_lock:
+    with ch.lock:
         if ahead < -1.0:                # we were idle (no listeners): restart the clock instead of bursting to catch up
-            bc["epoch"] = time.time() - (bc["bytes"] + len(chunk)) / BPS
-            bc["buf"].clear()
-        bc["bytes"] += len(chunk)
-        bc["last"] = time.time()
-        bc["buf"] += chunk
-        del bc["buf"][:-BURST]                  # BURST is a whole number of frames, so the burst starts on a frame
-        for lid, li in list(bc["listeners"].items()):
+            ch.epoch = time.time() - (ch.bytes + len(chunk)) / BPS
+            ch.buf.clear()
+        ch.bytes += len(chunk)
+        ch.last = time.time()
+        ch.buf += chunk
+        del ch.buf[:-BURST]                     # BURST is a whole number of frames, so the burst starts on a frame
+        for lid, li in list(ch.listeners.items()):
             try:
                 li["q"].put_nowait(chunk)
             except queue.Full:          # a listener that cannot keep up gets dropped (it reconnects)
-                bc["listeners"].pop(lid, None)
+                ch.listeners.pop(lid, None)
 
 
-def _air(entry):
-    with bc_lock:
-        entry = dict(entry or {"id": None}, start_pos=round(bc["bytes"] / BPS, 3))
-        bc["now"] = entry if entry.get("id") else None
-        bc["aired"] = (bc["aired"] + [entry])[-8:]
+def _air(ch, entry):
+    with ch.lock:
+        entry = dict(entry or {"id": None}, start_pos=round(ch.bytes / BPS, 3))
+        ch.now = entry if entry.get("id") else None
+        ch.aired = (ch.aired + [entry])[-8:]
 
 
-def _play_track(t):
+def _play_track(ch, t):
     d = app.DATA / t["id"]
     src = d / "song.mp3"
     if not src.is_file():
         src = d / "song" / "audio.flac"
     proc = subprocess.Popen(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(src), *ENCODE],
                             stdout=subprocess.PIPE, stdin=subprocess.DEVNULL)
-    bc["skip"].clear()
-    _air(t | {"duration": t.get("seconds")})
-    app.log("radio on air:", t["title"], f"({len(bc['listeners'])} listening)")
-    checked, start, pending = 0.0, bc["bytes"], b""
+    ch.skip.clear()
+    tuned = ch.station
+    _air(ch, t | {"duration": t.get("seconds")})
+    app.log(f"radio slot {ch.n} on air:", t["title"], f"({len(ch.listeners)} listening)")
+    checked, start, pending = 0.0, ch.bytes, b""
     try:
         while True:
             chunk = os.read(proc.stdout.fileno(), 8192)
@@ -676,76 +742,79 @@ def _play_track(t):
             n = len(pending) // FRAME * FRAME
             if not n:
                 continue
-            _broadcast(pending[:n]); pending = pending[n:]
-            if bc["skip"].is_set() or not state["on"]:
+            _broadcast(ch, pending[:n]); pending = pending[n:]
+            if ch.skip.is_set() or not ch.on:
                 break
-            if not bc["listeners"]:                # everyone left: stop airing to nobody
-                if (bc["bytes"] - start) / BPS < 30:     # barely started -> put it back on the spool for later
+            if not ch.listeners:                   # everyone left: stop airing to nobody
+                if (ch.bytes - start) / BPS < 30 and t.get("airing") == "new":     # barely started -> back on the spool
                     with app.lock:
                         j = app.jobs.get(t["id"])
                         if j:
                             j.update(radio_status="approved", played_at=None); app.save_job(j)
                 break
-            if time.time() - checked > 1:          # retuned to another station: cut over once it has a song ready
+            if time.time() - checked > 1:          # retuned: cut over once the new station has something to play
                 checked = time.time()
-                if t.get("station") != state["station"] and station_tracks(state["station"]):
+                if ch.station != tuned and ch.station and (ch.station == RERUNS or station_tracks(ch.station)):
                     break
     finally:
         proc.kill(); proc.wait()
 
 
-def _play_silence():
-    """Dead air while the radio is off or the next song is still being made (keeps listener connections open)."""
-    _air(None)
-    while bc["listeners"]:
-        for i in range(0, len(bc["silence"]), 8 * FRAME):
-            _broadcast(bc["silence"][i:i + 8 * FRAME])
-        if state["on"] and state["station"] and next_track(state["station"], mark=False):   # a new song, runner-up or rerun
+def _play_silence(ch):
+    """Dead air while the slot is off or the next song is still being made (keeps listener connections open)."""
+    _air(ch, None)
+    while ch.listeners:
+        for i in range(0, len(SILENCE), 8 * FRAME):
+            _broadcast(ch, SILENCE[i:i + 8 * FRAME])
+        if not SILENCE:
+            time.sleep(1)
+        if ch.on and ch.station and next_track(ch.station, mark=False, ch=ch):   # a new song, runner-up or rerun
             return
 
 
-def playout_loop():
-    try:
-        bc["silence"] = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
-                                        "anullsrc=r=48000:cl=stereo", "-t", "1.152", *ENCODE], capture_output=True, timeout=30).stdout
-    except Exception:
-        app.log("radio: could not make the silence frames:", traceback.format_exc())
+def playout_loop(ch):
     while True:
         try:
-            if not bc["listeners"]:                 # nobody listening: don't burn songs into the void
-                if bc["now"] is not None:
-                    _air(None)
-                bc["wake"].wait(2); bc["wake"].clear()
+            if not ch.listeners:                    # nobody listening: don't burn songs into the void
+                if ch.now is not None:
+                    _air(ch, None)
+                ch.wake.wait(2); ch.wake.clear()
                 continue
-            t = next_track(state["station"]) if state["on"] and state["station"] else None
+            t = next_track(ch.station, ch=ch) if ch.on and ch.station else None
             if t:
-                _play_track(t)
+                _play_track(ch, t)
             else:
-                _play_silence()
+                _play_silence(ch)
         except Exception:
-            app.log("radio playout error:", traceback.format_exc()); time.sleep(1)
+            app.log(f"radio playout error (slot {ch.n}):", traceback.format_exc()); time.sleep(1)
 
 
 def stream(h):
-    """GET /radio/stream.mp3 - the live broadcast. ?l=<id> lets the deck match up what it hears with the playlist."""
-    lid = re.sub(r"\W", "", (h.path.split("l=", 1)[1] if "l=" in h.path else "").split("&")[0])[:40] or uuid.uuid4().hex[:12]
+    """GET /radio/stream.mp3?ch=<slot>&l=<id> - a slot's live broadcast. l lets the deck match what it hears to the playlist."""
+    from urllib.parse import parse_qs, urlsplit
+    qs = parse_qs(urlsplit(h.path).query)
+    try:
+        ch = channel((qs.get("ch") or ["1"])[0])
+    except app.BadRequest:
+        return h.send(404, {"error": "No such slot"})
+    lid = re.sub(r"\W", "", (qs.get("l") or [""])[0])[:40] or uuid.uuid4().hex[:12]
     q = queue.Queue(maxsize=400)                    # ~2 minutes of slack before a stuck client is dropped
-    with bc_lock:
-        if time.time() - bc["last"] > 1.5:          # stream was idle: the buffer holds stale audio
-            bc["buf"].clear()
-        burst = bytes(bc["buf"])
-        bc["listeners"][lid] = {"q": q, "p0": (bc["bytes"] - len(burst)) / BPS, "since": time.time(),
-                                "agent": (h.headers.get("User-Agent") or "")[:80]}
-    bc["wake"].set()
+    with ch.lock:
+        if time.time() - ch.last > 1.5:             # stream was idle: the buffer holds stale audio
+            ch.buf.clear()
+        burst = bytes(ch.buf)
+        ch.listeners[lid] = {"q": q, "p0": (ch.bytes - len(burst)) / BPS, "since": time.time(),
+                             "agent": (h.headers.get("User-Agent") or "")[:80]}
+    ch.wake.set()
     try:
         h.send_response(200)
         for k, v in (("Content-Type", "audio/mpeg"), ("Cache-Control", "no-cache, no-store"), ("Connection", "close"),
-                     ("Access-Control-Allow-Origin", "*"), ("icy-name", "b70 radio"), ("X-Content-Type-Options", "nosniff")):
+                     ("Access-Control-Allow-Origin", "*"), ("icy-name", f"b70 radio · slot {ch.n}"), ("X-Content-Type-Options", "nosniff")):
             h.send_header(k, v)
         h.end_headers()
         if burst:
             h.wfile.write(burst)
-        while lid in bc["listeners"] and bc["listeners"][lid]["q"] is q:
+        while lid in ch.listeners and ch.listeners[lid]["q"] is q:
             try:
                 chunk = q.get(timeout=5)
             except queue.Empty:
@@ -754,27 +823,176 @@ def stream(h):
     except (BrokenPipeError, ConnectionResetError, OSError):
         pass
     finally:
-        with bc_lock:
-            if bc["listeners"].get(lid, {}).get("q") is q:
-                bc["listeners"].pop(lid, None)
+        with ch.lock:
+            if ch.listeners.get(lid, {}).get("q") is q:
+                ch.listeners.pop(lid, None)
     h.close_connection = True
 
 
-def skip(track_id, kind="skip"):
-    """Skip (or NOPE) the song on air - for everyone, it's one broadcast."""
+def skip(ch, track_id, kind="skip"):
+    """Skip (or NOPE) the song on air on one slot - for everyone listening to that slot."""
     if track_id:
         feedback(track_id, kind)
-    now = bc["now"]
+    now = ch.now
     if now and (not track_id or now["id"] == track_id):
-        bc["skip"].set()
+        ch.skip.set()
     return {"ok": True}
 
 
-def stream_view(listener=None):
-    with bc_lock:
-        li = bc["listeners"].get(listener) if listener else None
-        return {"pos": round(bc["bytes"] / BPS, 3), "listeners": len(bc["listeners"]), "aired": bc["aired"],
-                "now": bc["now"], "p0": li["p0"] if li else None, "url": "/radio/stream.mp3"}
+def stream_view(ch, listener=None):
+    with ch.lock:
+        li = ch.listeners.get(listener) if listener else None
+        return {"pos": round(ch.bytes / BPS, 3), "listeners": len(ch.listeners), "aired": ch.aired,
+                "now": ch.now, "p0": li["p0"] if li else None, "url": f"/radio/stream.mp3?ch={ch.n}"}
+
+
+# ----------------------------------------------------------------------------- owner + guest slots
+def _sha(x):
+    return hashlib.sha256(x.encode()).hexdigest()
+
+
+def owner_file():
+    try:
+        return json.loads((RADIO / "owner.json").read_text())
+    except Exception:
+        return {}
+
+
+def _save_owner(o):
+    f = RADIO / "owner.json"; tmp = RADIO / "owner.json.tmp"
+    tmp.write_text(json.dumps(o)); os.chmod(tmp, 0o600); tmp.replace(f)
+
+
+def set_owner_password(password, name=None):
+    """CLI: python3 app.py --set-owner-password. Stores only a salted scrypt hash; logs out every session."""
+    salt = secrets.token_hex(16)
+    h = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt), n=2**14, r=8, p=1).hex()
+    o = owner_file(); o.update(hash=f"scrypt${salt}${h}", sessions=[])
+    if name:
+        o["name"] = name
+    _save_owner(o)
+
+
+def _check_password(password):
+    try:
+        _, salt, want = owner_file()["hash"].split("$")
+    except Exception:
+        return False
+    got = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt), n=2**14, r=8, p=1).hex()
+    return hmac.compare_digest(got, want)
+
+
+def _cookie(h, name):
+    for part in (h.headers.get("Cookie") or "").split(";"):
+        k, _, v = part.strip().partition("=")
+        if k == name:
+            return v
+    return None
+
+
+def is_owner(h):
+    tok = _cookie(h, "radio_owner")
+    return bool(tok) and _sha(tok) in owner_file().get("sessions", [])
+
+
+def login(h, password):
+    if not owner_file().get("hash"):
+        raise app.BadRequest("No owner password is set yet — run: python3 app.py --set-owner-password on the server")
+    time.sleep(0.5)                                 # slow down guessing
+    if not _check_password(password or ""):
+        raise app.BadRequest("Wrong password")
+    tok = secrets.token_urlsafe(24)
+    o = owner_file(); o["sessions"] = (o.get("sessions", []) + [_sha(tok)])[-20:]; _save_owner(o)
+    return tok
+
+
+def logout(h):
+    tok = _cookie(h, "radio_owner")
+    if tok:
+        o = owner_file(); o["sessions"] = [x for x in o.get("sessions", []) if x != _sha(tok)]; _save_owner(o)
+
+
+def _claim_token(h):
+    """X-Radio-Claim: '<slot>:<token>' - a guest browser holds at most one slot."""
+    v = h.headers.get("X-Radio-Claim") or ""
+    n, _, tok = v.partition(":")
+    return (int(n), tok) if n.isdigit() and tok else (None, None)
+
+
+def holds(h, ch):
+    n, tok = _claim_token(h)
+    return n == ch.n and ch.claim is not None and hmac.compare_digest(ch.claim.get("token_hash", ""), _sha(tok))
+
+
+def can_control(h, ch):
+    return is_owner(h) or (ch.n > 1 and holds(h, ch))
+
+
+def require_control(h, ch):
+    if not can_control(h, ch):
+        raise app.BadRequest("Only the host can control slot 1" if ch.n == 1 else
+                             "Claim this slot first (or ask whoever holds it)" if ch.claim else "Claim this slot first")
+
+
+def claim(h, n, name):
+    ch = channel(n)
+    if ch.n == 1:
+        raise app.BadRequest("Slot 1 is the host's — log in instead")
+    name = re.sub(r"[^\w .'-]+", "", (name or "")).strip()[:24]
+    if not name:
+        raise app.BadRequest("Pick a nickname")
+    with lock:
+        if ch.claim and not holds(h, ch) and time.time() - ch.claim.get("seen", 0) < CLAIM_IDLE:
+            raise app.BadRequest(f"Slot {ch.n} is taken by {ch.claim['name']}")
+        old_n, old_tok = _claim_token(h)                 # one slot per browser: release the old one
+        if old_n and old_n != ch.n and holds(h, channels.get(old_n, ch)):
+            channels[old_n].claim = None
+        tok = secrets.token_urlsafe(16)
+        ch.claim = {"name": name, "token_hash": _sha(tok), "seen": time.time()}
+        save_state()
+    app.log(f"radio: slot {ch.n} claimed by {name}")
+    return {"ok": True, "slot": ch.n, "token": f"{ch.n}:{tok}", "name": name}
+
+
+def release(h, n):
+    ch = channel(n)
+    if not (holds(h, ch) or is_owner(h)):
+        raise app.BadRequest("That slot isn't yours")
+    with lock:
+        name = (ch.claim or {}).get("name")
+        ch.claim = None
+        save_state()
+    if not ch.listeners:
+        set_power(ch, False)
+    app.log(f"radio: slot {ch.n} released ({name})")
+    return {"ok": True}
+
+
+def touch(h):
+    n, _ = _claim_token(h)
+    if n in channels and holds(h, channels[n]):
+        channels[n].claim["seen"] = time.time()
+
+
+def expire_claims():
+    now = time.time()
+    for ch in channels.values():
+        if ch.n > 1 and ch.claim and now - ch.claim.get("seen", 0) > CLAIM_IDLE:
+            app.log(f"radio: slot {ch.n} claim by {ch.claim['name']} lapsed")
+            with lock:
+                ch.claim = None
+                save_state()
+            if not ch.listeners:
+                set_power(ch, False)
+
+
+def channel_view(h, ch):
+    st = stations.get(ch.station)
+    return {"n": ch.n, "host_slot": ch.n == 1, "name": (owner_file().get("name") or "Host") if ch.n == 1 else (ch.claim or {}).get("name"),
+            "claimed": ch.n == 1 or ch.claim is not None, "on": ch.on, "station": ch.station,
+            "station_name": "♻ Reruns" if ch.station == RERUNS else st["name"] if st else None,
+            "now": {k: (ch.now or {}).get(k) for k in ("title", "station_name")} if ch.now else None,
+            "listeners": len(ch.listeners), "mine": holds(h, ch), "control": can_control(h, ch)}
 
 
 # ----------------------------------------------------------------------------- API
@@ -794,7 +1012,9 @@ def rerun_library():
             "favorites": sum(1 for j in aired if j.get("radio_feedback") == "keep")}
 
 
-def api_state(listener=None):
+def api_state(h, listener=None, slot=1):
+    ch = channel(slot)
+    touch(h)
     with lock:
         st = []
         for s in sorted(stations.values(), key=lambda s: s["created"]):
@@ -808,9 +1028,10 @@ def api_state(listener=None):
         making = [{"title": j["title"], "status": j["status"], "stage": j.get("stage"), "progress": j.get("progress"), "station": j.get("station")}
                   for j in app.jobs.values() if j.get("source") == "radio" and j["status"] in ("queued", "running")]
         judging = sum(1 for j in app.jobs.values() if j.get("radio_status") == "judging")
-    return {"on": state["on"], "station": state["station"], "target_ahead": state["target_ahead"], "stations": st,
-            "making": making, "judging": judging, "gpu": app.state()["gpu"], "stream": stream_view(listener),
-            "reruns": rerun_library()}
+    return {"slot": ch.n, "on": ch.on, "station": ch.station, "target_ahead": state["target_ahead"], "stations": st,
+            "making": making, "judging": judging, "gpu": app.state()["gpu"], "stream": stream_view(ch, listener),
+            "reruns": rerun_library(), "channels": [channel_view(h, c) for c in channels.values()],
+            "viewer": {"owner": is_owner(h), "password_set": bool(owner_file().get("hash"))}}
 
 
 def _filler(sid):
@@ -833,7 +1054,7 @@ def _filler(sid):
     return None, None
 
 
-def _rerun_pick():
+def _rerun_pick(ch=None):
     """Rerun mode: a weighted shuffle over every song that has aired on any station - favorites 3x, better critic
     scores a little more, nothing aired in the last 3 h, never skipped/disliked songs, and preferably not the
     same station twice in a row."""
@@ -846,15 +1067,15 @@ def _rerun_pick():
     fresh = [j for j in pool if now - j["played_at"] > 3 * 3600]
     if not fresh:                                   # small library: the least recently aired third
         fresh = sorted(pool, key=lambda j: j["played_at"])[:max(1, len(pool) // 3)]
-    last = (bc["aired"][-1] if bc["aired"] else {}).get("station")
+    last = ((ch.aired[-1] if ch and ch.aired else None) or {}).get("station")
     w = [(3.0 if j.get("radio_feedback") == "keep" else 1.0) * (0.5 + max(0.0, (j.get("critic") or {}).get("score", 0.7)))
          * (0.4 if j.get("station") == last else 1.0) for j in fresh]
     return random.choices(fresh, weights=w)[0]
 
 
-def next_track(sid, mark=True):
+def next_track(sid, mark=True, ch=None):
     if sid == RERUNS:
-        j, airing, ready = _rerun_pick(), "rerun", None
+        j, airing, ready = _rerun_pick(ch), "rerun", None
     else:
         with app.lock:
             ready = sorted(station_tracks(sid, ("approved",)), key=lambda j: j.get("approved_at", 0))
@@ -919,29 +1140,28 @@ def feedback(track_id, kind):
     return {"ok": True}
 
 
-def set_power(on, sid=None):
+def set_power(ch, on, sid=None):
     with lock:
         if sid:
             if sid not in stations and sid != RERUNS:
                 raise app.BadRequest("No such station")
-            state["station"] = sid
-        if on and not state["station"]:
+            ch.station = sid
+        if on and not ch.station:
             raise app.BadRequest("Pick a station first")
-        state["on"] = bool(on)
+        ch.on = bool(on)
         save_state()
-    if not on or state["station"] == RERUNS:
-        with app.lock:                         # drop queued (and, when switching off, in-progress) radio work so the GPUs free up
-            for j in app.jobs.values():
-                if j.get("source") == "radio" and j["status"] == "queued":
-                    j.update(status="cancelled", stage="", finished=time.time(), radio_status="cancelled"); app.save_job(j)
-                elif j.get("source") == "radio" and j["status"] == "running" and not on:
-                    j["_cancel"] = True
-            studio_busy = any(j["status"] in ("queued", "running") and j.get("source") != "radio" for j in app.jobs.values())
-            if not studio_busy:
-                app.gpu["release_on_idle"] = True   # radio off -> give the GPUs back once running takes finish
-    else:
-        app.gpu["release_on_idle"] = False
-    return {"ok": True, "on": state["on"], "station": state["station"]}
+    want = wanted()
+    with app.lock:          # drop queued work no slot wants any more; cancel running takes only when the GPUs aren't needed
+        for j in app.jobs.values():
+            if j.get("source") != "radio" or j.get("station") in want:
+                continue
+            if j["status"] == "queued":
+                j.update(status="cancelled", stage="", finished=time.time(), radio_status="cancelled"); app.save_job(j)
+            elif j["status"] == "running" and not want:
+                j["_cancel"] = True
+        studio_busy = any(j["status"] in ("queued", "running") and j.get("source") != "radio" for j in app.jobs.values())
+    app.gpu["release_on_idle"] = not want and not studio_busy     # nothing generating -> give the GPUs back to the LLM
+    return {"ok": True, "slot": ch.n, "on": ch.on, "station": ch.station}
 
 
 def upload(sid, name, data):
@@ -971,18 +1191,31 @@ def start_analysis(sid):
 
 def handle(h, method, path):
     """Route /api/radio/* requests. Returns True if handled."""
-    q = {}
-    if "?" in h.path:
-        q = dict(x.split("=", 1) for x in h.path.split("?", 1)[1].split("&") if "=" in x)
+    from urllib.parse import parse_qs, urlsplit
+    q = {k: v[0] for k, v in parse_qs(urlsplit(h.path).query).items()}
     try:
         if method == "GET" and path == "/api/radio/favorites":
             return h.send(200, {"tracks": favorites()}) or True
         if method == "GET" and path == "/api/radio/state":
-            return h.send(200, api_state(q.get("listener"))) or True
+            return h.send(200, api_state(h, q.get("listener"), q.get("slot") or 1)) or True
+        if method == "POST" and path == "/api/radio/login":
+            tok = login(h, h.body().get("password"))
+            return h.send(200, {"ok": True}, extra={"Set-Cookie": f"radio_owner={tok}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax"}) or True
+        if method == "POST" and path == "/api/radio/logout":
+            logout(h)
+            return h.send(200, {"ok": True}, extra={"Set-Cookie": "radio_owner=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"}) or True
+        if method == "POST" and path == "/api/radio/claim":
+            b = h.body(); return h.send(200, claim(h, b.get("slot"), b.get("name"))) or True
+        if method == "POST" and path == "/api/radio/release":
+            b = h.body(); return h.send(200, release(h, b.get("slot"))) or True
         if method == "POST" and path == "/api/radio/skip":
-            b = h.body(); return h.send(200, skip(b.get("track"), "dislike" if b.get("kind") == "dislike" else "skip")) or True
+            b = h.body(); ch = channel(b.get("slot")); require_control(h, ch)
+            return h.send(200, skip(ch, b.get("track"), "dislike" if b.get("kind") == "dislike" else "skip")) or True
         if method == "GET" and path == "/api/radio/next":
-            t = next_track(q.get("station") or state["station"], mark=q.get("peek") != "1")
+            ch = channel(q.get("slot"))
+            if q.get("peek") != "1":
+                require_control(h, ch)
+            t = next_track(q.get("station") or ch.station, mark=q.get("peek") != "1", ch=ch)
             return h.send(200, {"track": t}) or True
         m = re.fullmatch(r"/api/radio/stations/([\w]+)/history", path)
         if method == "GET" and m:
@@ -991,9 +1224,12 @@ def handle(h, method, path):
             return h.send(200, {"station": create_station(h.body())}) or True
         m = re.fullmatch(r"/api/radio/stations/([\w]+)", path)
         if method == "DELETE" and m:
+            if not is_owner(h):
+                return h.send(403, {"error": "Only the host can delete stations"}) or True
             delete_station(m.group(1)); return h.send(200, {"ok": True}) or True
         if method == "POST" and path == "/api/radio/power":
-            b = h.body(); return h.send(200, set_power(b.get("on"), b.get("station"))) or True
+            b = h.body(); ch = channel(b.get("slot")); require_control(h, ch)
+            return h.send(200, set_power(ch, b.get("on"), b.get("station"))) or True
         if method == "POST" and path == "/api/radio/feedback":
             b = h.body(); return h.send(200, feedback(b.get("track", ""), b.get("kind", ""))) or True
         m = re.fullmatch(r"/api/radio/stations/([\w]+)/analyze", path)

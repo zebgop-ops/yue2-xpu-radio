@@ -140,6 +140,31 @@ h2 { font-size: 15px; margin: 0 0 10px; }
 .btn { font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
 .btn.primary { background: var(--red); border-color: var(--red); color: #fff; font-weight: 600; }
 .btn.danger { color: var(--red); }
+.slots { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0 0 14px; }
+@media (max-width: 760px) { .slots { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.slot { position: relative; text-align: left; font: inherit; color: inherit; cursor: pointer; border: 1px solid var(--line); border-radius: 10px;
+        padding: 9px 11px 9px 13px; background: var(--card); min-width: 0; transition: box-shadow .2s, border-color .2s; }
+.slot .hd { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.slot .num { flex: none; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font: 700 12px var(--mono);
+             background: var(--line); color: var(--text); }
+.slot .who { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.slot .who.free { font-weight: 500; color: var(--muted); }
+.slot .lis { font-size: 12px; color: var(--muted); flex: none; }
+.slot .st { font-size: 12px; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slot .np { font-size: 13px; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-height: 18px; }
+.slot .acts { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.slot .acts .btn { font-size: 12px; padding: 3px 9px; }
+.slot.sel { border-color: var(--red); box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 30%, transparent); }
+.slot.live .num { background: var(--red); color: #fff; animation: pulse 1.6s ease-in-out infinite; }
+.slot.live { box-shadow: 0 0 18px color-mix(in srgb, var(--red) 22%, transparent); }
+.slot.sel.live { box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 30%, transparent), 0 0 18px color-mix(in srgb, var(--red) 25%, transparent); }
+.slot .eq { display: none; gap: 2px; align-items: flex-end; height: 12px; flex: none; }
+.slot.live .eq { display: inline-flex; } .slot .eq i { width: 3px; background: var(--red); animation: eq 0.9s ease-in-out infinite; }
+.slot .eq i:nth-child(2) { animation-delay: -.3s; } .slot .eq i:nth-child(3) { animation-delay: -.6s; }
+.slot .mine { font: 700 10px var(--mono); letter-spacing: .08em; color: var(--red); flex: none; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--red) 25%, transparent); } }
+@keyframes eq { 0%, 100% { height: 3px; } 50% { height: 12px; } }
+.key:disabled { opacity: .45; cursor: not-allowed; }
 .scorep { margin-top: 18px; }
 .scorep h2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0; }
 .scorep h2 .sec { font: 600 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; background: var(--red); color: #fff; }
@@ -204,6 +229,7 @@ input[type=text], textarea, select { width: 100%; font: inherit; color: var(--te
     </span>
   </header>
 
+  <section class="slots" id="slots" aria-label="Radio slots"></section>
   <section class="deck" id="deck">
     <span class="bolt" style="left:9px;top:9px"></span><span class="bolt" style="right:9px;top:9px"></span><span class="bolt" style="left:9px;bottom:9px"></span><span class="bolt" style="right:9px;bottom:9px"></span>
     <div class="brand"><b>b70</b> AI-1 Stereo Cassette Deck <span class="r">Endless play · Auto-reverse · YuE2</span></div>
@@ -395,7 +421,8 @@ input[type=text], textarea, select { width: 100%; font: inherit; color: var(--te
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const mmss = (s) => { s = Math.max(0, Math.round(s || 0)); return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; };
-const api = async (path, opts = {}) => { const r = await fetch(path, opts); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j; };
+const claimTok = () => { try { return localStorage.getItem("radio.claim") || ""; } catch { return ""; } };
+const api = async (path, opts = {}) => { opts.headers = {...(opts.headers || {}), ...(claimTok() ? {"X-Radio-Claim": claimTok()} : {})}; const r = await fetch(path, opts); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j; };
 const post = (path, body) => api(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
 const store = { get(k, d) { try { const v = localStorage.getItem("radio." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
                 set(k, v) { try { localStorage.setItem("radio." + k, JSON.stringify(v)); } catch {} } };
@@ -535,6 +562,9 @@ function vuLoop(now) {
 }
 // ---------------- playback: one shared live broadcast — every client hears the same song
 let lid = null, shownId = undefined, prevOn = null;
+let slot = +store.get("slot", 1) || 1;                 // the slot this page listens to / controls
+const viewCh = () => R && R.channels ? R.channels.find(c => c.n === slot) : null;
+const canCtl = () => { const c = viewCh(); return !!(c && c.control); };
 function streamPos() { return R && R.stream && lid && R.stream.p0 != null ? R.stream.p0 + audio.currentTime : null; }
 function hearing() {                       // the aired entry audible on THIS client (it lags the server by its buffer)
   const s = R && R.stream; if (!s) return null;
@@ -544,7 +574,7 @@ function hearing() {                       // the aired entry audible on THIS cl
 }
 function connect() {
   lid = Math.random().toString(36).slice(2, 12);
-  audio.src = `/radio/stream.mp3?l=${lid}`;
+  audio.src = `/radio/stream.mp3?ch=${slot}&l=${lid}`;
   audio.play().catch(e => hint("Press PLAY to start audio (" + e.message + ")"));
   setTimeout(refresh, 400);
 }
@@ -564,7 +594,7 @@ function setPlayingUI() {
 function syncNow() {
   const h = hearing(), id = h ? h.id : null;
   if (id !== shownId) { shownId = id; showTrack(h ? {...h} : null); setPlayingUI(); if (h) loadHistory(); }
-  if (lid && !h && R) hint(R.on ? firstWaitHint(9) : "The radio is off — press POWER or PLAY.");
+  if (lid && !h && R) hint(R.on ? firstWaitHint(9) : canCtl() ? "This slot is off — press POWER or PLAY." : `Slot ${slot} is off right now.`);
 }
 function showTrack(t) {
   current = t; loadScore(t);
@@ -603,15 +633,17 @@ $("kPlay").onclick = async () => {
   ensureAudioGraph(); if (actx && actx.state === "suspended") await actx.resume();
   if (lid) { wantPlay = false; disconnect(); return; }
   document.querySelectorAll(".fav audio").forEach(a => a.pause());
-  if (!selected) return hint("Pick a station first.");
   wantPlay = true;
-  if (!R || !R.on || R.station !== selected) {
-    try { await post("/api/radio/power", {on: true, station: selected}); prevOn = true; } catch (e) { wantPlay = false; return hint(e.message); }
-  }
+  if (canCtl()) {
+    if (!selected) { wantPlay = false; return hint("Pick a station first."); }
+    if (!R || !R.on || R.station !== selected) {
+      try { await post("/api/radio/power", {slot, on: true, station: selected}); prevOn = true; } catch (e) { wantPlay = false; return hint(e.message); }
+    }
+  } else if (R && !R.on) hint(`Listening in on slot ${slot} — it's off right now, so you'll hear silence until its owner turns it on.`);
   connect();
 };
-$("kSkip").onclick = () => { post("/api/radio/skip", {track: current ? current.id : null}).catch(e => hint(e.message)); hint("Skipping for everyone listening…"); };
-$("kDislike").onclick = () => { post("/api/radio/skip", {track: current ? current.id : null, kind: "dislike"}).catch(e => hint(e.message)); hint("Noted — less like this. Skipping…"); };
+$("kSkip").onclick = () => { post("/api/radio/skip", {slot, track: current ? current.id : null}).catch(e => hint(e.message)); hint("Skipping for everyone on this slot…"); };
+$("kDislike").onclick = () => { post("/api/radio/skip", {slot, track: current ? current.id : null, kind: "dislike"}).catch(e => hint(e.message)); hint("Noted — less like this. Skipping…"); };
 $("kKeep").onclick = async () => {
   if (!current) return;
   const kind = current.feedback === "keep" ? "clear" : "keep";
@@ -624,7 +656,7 @@ $("kPower").onclick = async () => {
   const on = !(R && R.on);
   if (on && !selected) return hint("Pick a station first.");
   if (!on) { wantPlay = false; disconnect(); }
-  try { await post("/api/radio/power", {on, station: selected}); prevOn = on; hint(!on ? "Radio off — the GPUs go back to the LLM once the current takes finish." : selected === RERUNS ? "Reruns on — nothing is generated, the LLM keeps the GPUs. Press PLAY to listen." : "Radio on — generating songs (the LLM is paused while the radio runs). Press PLAY to listen."); }
+  try { await post("/api/radio/power", {slot, on, station: selected}); prevOn = on; hint(!on ? "Radio off — the GPUs go back to the LLM once the current takes finish." : selected === RERUNS ? "Reruns on — nothing is generated, the LLM keeps the GPUs. Press PLAY to listen." : "Radio on — generating songs (the LLM is paused while the radio runs). Press PLAY to listen."); }
   catch (e) { hint(e.message); }
   refresh();
 };
@@ -686,14 +718,16 @@ function renderDeck() {
 }
 async function refresh() {
   try {
-    R = await api("/api/radio/state" + (lid ? `?listener=${lid}` : ""));
-    if (R.on && R.station && R.station !== selected) { selected = R.station; store.set("station", selected); loadHistory(); }   // one broadcast: follow its station
+    R = await api(`/api/radio/state?slot=${slot}` + (lid ? `&listener=${lid}` : ""));
+    if (R.station && R.station !== selected && (R.on || !canCtl())) { selected = R.station; store.set("station", selected); loadHistory(); }   // follow the slot's station
     else if (!selected && R.station) selected = R.station;
-    if (prevOn && !R.on && lid) { wantPlay = false; disconnect(); hint("The radio was switched off."); }
+    if (prevOn && !R.on && lid && canCtl()) { wantPlay = false; disconnect(); hint("This slot was switched off."); }
     prevOn = R.on;
     const n = R.stream ? R.stream.listeners : 0;
-    $("lisChip").textContent = `📡 ${n} listening`;
-    renderShelf(); renderDeck();
+    $("lisChip").textContent = `📡 ${n} listening · slot ${slot}`; $("lisChip").href = `/radio/stream.mp3?ch=${slot}`;
+    renderSlots(); renderShelf(); renderDeck();
+    const ctl = canCtl();
+    ["kPower", "kSkip", "kDislike"].forEach(id => { $(id).disabled = !ctl; $(id).title = ctl ? "" : "Only this slot's owner can do that"; });
   } catch (e) { $("gpuChip").textContent = "radio unreachable"; }
 }
 async function loadHistory() {
@@ -1028,14 +1062,82 @@ $("favs").addEventListener("play", (e) => {
 $("shelf").onclick = async (e) => {
   const b = e.target.closest("[data-st]"); if (!b) return;
   const id = b.dataset.st; if (id === selected) return openStation(id);
+  if (!canCtl()) { openStation(id); return hint(slot === 1 ? "Slot 1 is the host's. Claim a free slot above to pick your own stations." : "This slot isn't yours — claim a free slot above to pick stations."); }
   selected = id; store.set("station", id); shelfSig = ""; renderShelf(); renderDeck(); loadHistory();
   if (R.on) {
-    await post("/api/radio/power", {on: true, station: id}).catch(e => hint(e.message));
-    hint(id === RERUNS ? "Reruns for everyone — nothing new is generated, so the GPUs go back to the LLM." : "Retuned for everyone — the new station starts once its first song is ready.");
+    await post("/api/radio/power", {slot, on: true, station: id}).catch(e => hint(e.message));
+    hint(id === RERUNS ? "Reruns on this slot — nothing new is generated for it." : "Retuned this slot — the new station starts once its first song is ready.");
     refresh();
   }
   else hint("Station selected — press PLAY (click the tape again for details).");
 };
+
+// ---------------- slots: 1 = host (password), 2-4 = guests with a nickname; listen to any, control your own
+let slotsSig = "";
+function renderSlots() {
+  const owner = R.viewer && R.viewer.owner;
+  const sig = JSON.stringify([R.channels, slot, owner]); if (sig === slotsSig) return; slotsSig = sig;
+  $("slots").innerHTML = R.channels.map(c => {
+    const live = c.on && c.now, mine = c.mine || (c.host_slot && owner);
+    const who = c.host_slot ? `🔒 ${esc(c.name || "Host")}` : c.claimed ? esc(c.name) : "Free slot";
+    const acts = c.host_slot ? (owner ? `<button class="btn" data-act="logout">Log out</button>` : `<button class="btn" data-act="login">Host log in</button>`)
+               : c.mine ? `<button class="btn" data-act="leave" data-n="${c.n}">Leave</button>`
+               : !c.claimed ? `<button class="btn primary" data-act="claim" data-n="${c.n}">Claim</button>`
+               : owner ? `<button class="btn" data-act="kick" data-n="${c.n}">Free it</button>` : "";
+    return `<div class="slot ${c.n === slot ? "sel" : ""} ${live ? "live" : ""}" data-slot="${c.n}" role="button" tabindex="0" aria-pressed="${c.n === slot}"
+        title="${c.n === slot ? "You're on this slot" : "Listen to this slot"}">
+      <div class="hd"><span class="num">${c.n}</span><span class="who ${c.claimed ? "" : "free"}">${who}</span>${mine ? `<span class="mine">YOU</span>` : ""}
+        <span class="eq" aria-hidden="true"><i></i><i></i><i></i></span><span class="lis">🎧 ${c.listeners}</span></div>
+      <div class="st">${c.on ? (c.station_name ? "📼 " + esc(c.station_name) : "on") : c.claimed ? "off" : "nobody here — claim it"}</div>
+      <div class="np">${live ? "♪ " + esc(c.now.title) : ""}</div>
+      ${acts ? `<div class="acts">${acts}</div>` : ""}</div>`;
+  }).join("");
+}
+function switchSlot(n) {
+  if (n === slot) return;
+  slot = n; store.set("slot", n); prevOn = null; slotsSig = ""; shownId = undefined;
+  if (lid) { disconnect(); wantPlay = true; connect(); }
+  refresh().then(() => { loadHistory(); hint(canCtl() ? `You're controlling slot ${n}.` : `Listening in on slot ${n}.`); });
+}
+$("slots").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-act]");
+  if (b) {
+    e.stopPropagation();
+    const n = +b.dataset.n, act = b.dataset.act;
+    try {
+      if (act === "claim") {
+        const name = (prompt("Pick a nickname for your slot:", store.get("nick", "")) || "").trim(); if (!name) return;
+        const r = await post("/api/radio/claim", {slot: n, name});
+        try { localStorage.setItem("radio.claim", r.token); } catch {}
+        store.set("nick", r.name); switchSlot(n); hint(`Slot ${n} is yours, ${r.name} — pick a station below and press PLAY.`);
+      } else if (act === "leave" || act === "kick") {
+        if (act === "kick" && !confirm(`Free slot ${n}? Its guest loses control of it.`)) return;
+        await post("/api/radio/release", {slot: n});
+        if (act === "leave") { try { localStorage.removeItem("radio.claim"); } catch {} }
+      } else if (act === "login") {
+        openLogin();
+      } else if (act === "logout") {
+        await post("/api/radio/logout"); hint("Logged out.");
+      }
+    } catch (err) { hint(err.message); }
+    slotsSig = ""; refresh();
+    return;
+  }
+  const card = e.target.closest("[data-slot]"); if (card) switchSlot(+card.dataset.slot);
+});
+$("slots").addEventListener("keydown", (e) => { const c = e.target.closest("[data-slot]"); if (c && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); switchSlot(+c.dataset.slot); } });
+function openLogin() {
+  if (R && R.viewer && !R.viewer.password_set) return hint("No host password is set yet — on the server run: python3 app.py --set-owner-password");
+  openDialog("Host log in", `<form id="loginForm"><label class="f" for="pw">Password for slot 1</label>
+    <input type="password" id="pw" autocomplete="current-password" style="width:100%;font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)">
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center"><button class="btn primary" type="submit">Log in</button><span class="err" id="pwErr"></span></div></form>`);
+  $("pw").focus();
+  $("loginForm").onsubmit = async (e) => {
+    e.preventDefault();
+    try { await post("/api/radio/login", {password: $("pw").value}); $("dlg").close(); switchSlot(1); slotsSig = ""; refresh(); hint("Welcome back — you control every slot."); }
+    catch (err) { $("pwErr").textContent = err.message; }
+  };
+}
 
 // ---------------- station dialog
 function openDialog(title, html) { $("dlgT").textContent = title; $("dlgB").innerHTML = html; $("dlg").showModal(); }
@@ -1051,8 +1153,8 @@ function openStation(id) {
       <b>Tempo:</b> ${p.bpm_range ? p.bpm_range.join("–") + " BPM" : "?"} · <b>Vocals:</b> ${Math.round(p.vocal_share * 100)}% · ${p.tracks} songs</p>` : ""}
     <p class="small muted">Generated ${s.stats.generated} · approved ${s.stats.approved} · rejected by the critic ${s.stats.rejected} · played ${s.stats.played} · kept ${s.stats.kept} · disliked ${s.stats.disliked}</p>
     ${s.kind === "folder" ? folderTools(s) : ""}
-    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn danger" id="delSt">Delete station</button></div>`);
-  $("delSt").onclick = async () => { if (!confirm(`Delete "${s.name}" and its songs?`)) return; await api(`/api/radio/stations/${s.id}`, {method: "DELETE"}); if (selected === s.id) { selected = null; store.set("station", null); } $("dlg").close(); shelfSig = ""; refresh(); };
+    ${R.viewer && R.viewer.owner ? `<div style="display:flex;gap:8px;margin-top:12px"><button class="btn danger" id="delSt">Delete station</button></div>` : ""}`);
+  if ($("delSt")) $("delSt").onclick = async () => { if (!confirm(`Delete "${s.name}" and its songs?`)) return; await api(`/api/radio/stations/${s.id}`, {method: "DELETE"}); if (selected === s.id) { selected = null; store.set("station", null); } $("dlg").close(); shelfSig = ""; refresh(); };
   if (s.kind === "folder") wireFolderTools(s);
 }
 function folderTools(s) {

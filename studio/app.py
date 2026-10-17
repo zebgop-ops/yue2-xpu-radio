@@ -25,6 +25,8 @@ LLM_UNIT = os.environ.get("STUDIO_LLM_UNIT", "vllm-qwen38.service")
 PORT = int(os.environ.get("STUDIO_PORT", "7860"))
 SKILL = Path(os.environ.get("STUDIO_INSTRUMENTAL", "~/yue2/YuE/skills/yue2-music/instrumental/scripts")).expanduser()
 MAX_QUEUED = 24
+BATCH = max(1, int(os.environ.get("STUDIO_BATCH", "4")))      # radio songs decoded together per card
+BATCH_WAIT = float(os.environ.get("STUDIO_BATCH_WAIT", "15"))  # seconds radio songs may wait for batch-mates
 # Lyrics / songwriter LLMs (OpenAI-compatible), tried in order: "base_url|model|label,...". The local LLM is
 # paused while the studio holds the GPUs, so add a second server on another machine as the fallback.
 LYRICS_LLMS = [tuple(x.split("|")) for x in os.environ.get(
@@ -297,30 +299,7 @@ def run_job(pipe, base, job, update, cancelled):
             song = pipe(lyrics=lyric_tags(converted), cot=job["cot"], abc=converted, **common)
         else:
             song = pipe(lyrics=job["lyrics"], cot=job["cot"], abc=job["abc"], **common)
-        out = d / "song"
-        if out.exists():
-            shutil.rmtree(out)
-        song.save_artifacts(out)
-        faded = False
-        try:
-            faded = soften_ending(out / "audio.flac")
-        except Exception:
-            log("fade-out failed", job["id"], traceback.format_exc())
-        if faded:
-            update(faded=True); log("faded out an abrupt ending", job["id"])
-        update(stage="Encoding MP3")
-        # the library keeps one 320 kbps MP3 per song; the 24-bit FLAC render is only an intermediate
-        sh("ffmpeg", "-y", "-loglevel", "error", "-i", str(out / "audio.flac"), "-codec:a", "libmp3lame", "-b:a", "320k",
-           "-metadata", f"title={job['title']}", "-metadata", "artist=YuE2 on b70", str(d / "song.mp3"))
-        if (d / "song.mp3").stat().st_size > 10_000:
-            (out / "audio.flac").unlink()
-            (out / "latent.npy").unlink(missing_ok=True)       # only needed to re-decode; ~1.4 MB per song
-        result = json.loads((out / "result.json").read_text())
-        gen = round(time.time() - t0, 1)
-        update(status="done", stage="", finished=time.time(), seconds=result.get("audio_seconds"),
-               truncated=result.get("truncated"), timing={k: v for k, v in result.get("timing", {}).items() if k != "load"},
-               gen_seconds=gen, progress={})
-        log("done", job["id"], f"{result.get('audio_seconds', 0):.1f}s audio in {gen}s")
+        finish_song(job, song, update, t0)
     except InterruptedError:
         update(status="cancelled", stage="", finished=time.time(), progress={})
         log("cancelled", job["id"])
@@ -332,8 +311,112 @@ def run_job(pipe, base, job, update, cancelled):
         pipe.generation_config = base
 
 
+def finish_song(job, song, update, t0):
+    """Save a rendered song: artifacts, fade-out of an abrupt ending, the library's 320 kbps MP3."""
+    d = DATA / job["id"]
+    out = d / "song"
+    if out.exists():
+        shutil.rmtree(out)
+    song.save_artifacts(out)
+    faded = False
+    try:
+        faded = soften_ending(out / "audio.flac")
+    except Exception:
+        log("fade-out failed", job["id"], traceback.format_exc())
+    if faded:
+        update(faded=True); log("faded out an abrupt ending", job["id"])
+    update(stage="Encoding MP3")
+    # the library keeps one 320 kbps MP3 per song; the 24-bit FLAC render is only an intermediate
+    sh("ffmpeg", "-y", "-loglevel", "error", "-i", str(out / "audio.flac"), "-codec:a", "libmp3lame", "-b:a", "320k",
+       "-metadata", f"title={job['title']}", "-metadata", "artist=YuE2 on b70", str(d / "song.mp3"))
+    if (d / "song.mp3").stat().st_size > 10_000:
+        (out / "audio.flac").unlink()
+        (out / "latent.npy").unlink(missing_ok=True)       # only needed to re-decode; ~1.4 MB per song
+    result = json.loads((out / "result.json").read_text())
+    gen = round(time.time() - t0, 1)
+    update(status="done", stage="", finished=time.time(), seconds=result.get("audio_seconds"),
+           truncated=result.get("truncated"), timing={k: v for k, v in result.get("timing", {}).items() if k != "load"},
+           gen_seconds=gen, progress={})
+    log("done", job["id"], f"{result.get('audio_seconds', 0):.1f}s audio in {gen}s")
+
+
+def batchable(job):
+    """Plain radio-style songs share a batch: own lyrics/style/seed, default sampling, no CFG, no supplied score."""
+    return (job["mode"] == "song" and not job.get("abc") and job.get("cfg_scale") is None and job.get("cot") == "full"
+            and not job.get("abc_sampling") and not job.get("semantic_sampling"))
+
+
+def run_batch(pipe, base, jobs_, updates, is_cancelled):
+    """Score + song stages for several songs in one batched decode, then NAR + VAE + saving per song."""
+    import dataclasses
+    from batch import generate_batch
+    from yue2.protocol import token_prefixes, CODEC_OFFSET
+    from yue2.pipeline import SymbolicPlan, SemanticResult, SongResult
+    from yue2.storage import identity
+    t0, B = time.time(), len(jobs_)
+    log("batch start", B, "songs:", ", ".join(j["id"] for j in jobs_))
+    live = list(range(B))
+    for i, j in enumerate(jobs_):
+        updates[i](status="running", started=t0, stage=f"Composing the score (batch of {B})", progress={})
+    try:
+        pipe.generation_config = dataclasses.replace(base, ode_steps=jobs_[0]["ode_steps"])
+        model = pipe._load_model()
+        reqs = [pipe._request(j["style"], j["lyrics"], cot="full", seed=j["seed"]) for j in jobs_]
+        caps = [int(max(base.semantic.min_tokens + 1, min(base.semantic.max_tokens, j["max_seconds"] * TOKENS_PER_AUDIO_SECOND)))
+                for j in jobs_]
+        sem_s = dataclasses.replace(base.semantic, max_tokens=max(caps))
+        abc = generate_batch(model, [token_prefixes(r, pipe.tokenizer) for r in reqs], base.abc, [r.seed for r in reqs], "abc",
+                             cancelled=lambda i: is_cancelled(jobs_[i]["id"]),
+                             progress=lambda i, n: updates[i](progress={"phase": "abc", "tokens": n, "batch": B}))
+        plans = []
+        for i, (r, (ids, tm, tr, killed)) in enumerate(zip(reqs, abc)):
+            if killed:
+                updates[i](status="cancelled", stage="", finished=time.time(), progress={}); live.remove(i); plans.append(None)
+            elif tr or not ids:
+                updates[i](status="failed", stage="", finished=time.time(), progress={}, error="The model's score was empty or cut off")
+                live.remove(i); plans.append(None)
+            else:
+                plans.append(SymbolicPlan(r, pipe.tokenizer.decode(ids), ids, token_prefixes(r, pipe.tokenizer, ids), tm, tr))
+        if not live:
+            return
+        for i in live:
+            updates[i](stage=f"Generating the song (batch of {len(live)})")
+        sem = generate_batch(model, [plans[i].prefix for i in live], sem_s, [reqs[i].seed for i in live], "semantic",
+                             caps=[caps[i] for i in live], cancelled=lambda k: is_cancelled(jobs_[live[k]]["id"]),
+                             progress=lambda k, n: updates[live[k]](progress={"phase": "semantic", "tokens": n, "batch": len(live),
+                                 "music_seconds": round(n / TOKENS_PER_AUDIO_SECOND, 1), "max_music_seconds": jobs_[live[k]]["max_seconds"]}))
+        results = dict(zip(live, sem))
+    except Exception as e:
+        for i in live:
+            updates[i](status="failed", stage="", finished=time.time(), error=f"{type(e).__name__}: {e}"[:500], progress={})
+        log("batch failed", traceback.format_exc())
+        return
+    for i in list(live):                            # NAR + VAE + saving, one song at a time
+        job, (ids, tm, tr, killed) = jobs_[i], results[i]
+        if killed or is_cancelled(job["id"]):
+            updates[i](status="cancelled", stage="", finished=time.time(), progress={}); continue
+        try:
+            semantic = SemanticResult(plans[i], [int(t) - CODEC_OFFSET for t in ids], tm, tr)
+            updates[i](stage="Rendering audio", progress={"phase": "audio"})
+            n0 = time.perf_counter(); latents = pipe.synthesize(semantic); nar = time.perf_counter() - n0
+            updates[i](stage="Decoding audio", progress={"phase": "decode"})
+            v0 = time.perf_counter(); audio = pipe.decode(latents); vae = time.perf_counter() - v0
+            config = pipe.effective_config(reqs[i], base.abc, dataclasses.replace(sem_s, max_tokens=caps[i]))
+            timing = {"abc": plans[i].timing, "semantic": tm, "nar_seconds": nar, "vae_seconds": vae,
+                      "e2e_seconds": time.time() - t0, "batch": B}
+            song = SongResult(audio, 48000, semantic, latents, config, pipe.weights, timing,
+                              identity({"request": reqs[i].to_dict(), "config": config, "weights": pipe.weights}))
+            finish_song(job, song, updates[i], t0)
+        except Exception as e:
+            updates[i](status="failed", stage="", finished=time.time(), error=f"{type(e).__name__}: {e}"[:500], progress={})
+            log("failed", job["id"], traceback.format_exc())
+    pipe.generation_config = base
+
+
 def gpu_main(device, task_q, event_q, cancel_ev):
-    """GPU child process for one card: loads YuE2 once, renders jobs until told to stop, then exits (freeing all VRAM)."""
+    """GPU child process for one card: loads YuE2 once, renders jobs until told to stop, then exits (freeing all VRAM).
+    Messages: a job dict, {"cancel": id}, or None (stop). Plain songs that arrive together run as one batch."""
+    from collections import deque
     try:
         from yue2 import YuE2Pipeline
         pipe = YuE2Pipeline.from_pretrained("m-a-p/YuE2-3B", device=device, progress=False)
@@ -342,13 +425,60 @@ def gpu_main(device, task_q, event_q, cancel_ev):
     except Exception as e:
         event_q.put(("fatal", None, {"error": f"{type(e).__name__}: {e}"}))
         return
-    while True:
-        job = task_q.get()
-        if job is None:
+    inbox, cancelled, stop = deque(), set(), [False]
+
+    def take(msg):
+        if msg is None:
+            stop[0] = True
+        elif "cancel" in msg:
+            cancelled.add(msg["cancel"])
+        else:
+            inbox.append(msg)
+
+    def poll(block=False, timeout=None):
+        try:
+            take(task_q.get(block, timeout))
+            while True:
+                take(task_q.get_nowait())
+        except queue.Empty:
+            pass
+
+    def is_cancelled(jid):
+        poll()
+        return jid in cancelled
+
+    def updater(jid):
+        return lambda **kw: event_q.put(("update", jid, kw))
+
+    event_q.put(("idle", None, {}))
+    while not stop[0]:
+        if not inbox:
+            poll(block=True)
+        while not stop[0]:                              # the parent sends a batch back to back; collect stragglers
+            n = len(inbox)
+            poll(block=True, timeout=0.3)
+            if len(inbox) == n:
+                break
+        if stop[0]:
             break
-        cancel_ev.clear()
-        run_job(pipe, base, job, lambda **kw: event_q.put(("update", job["id"], kw)), cancel_ev.is_set)
-        event_q.put(("finished", job["id"], {}))
+        work = [j for j in inbox if j["id"] not in cancelled]
+        for j in inbox:
+            if j["id"] in cancelled:
+                event_q.put(("update", j["id"], {"status": "cancelled", "stage": "", "finished": time.time(), "progress": {}}))
+                event_q.put(("finished", j["id"], {}))
+        inbox.clear()
+        group = [j for j in work if batchable(j)][:BATCH]
+        if len(group) >= 2:
+            run_batch(pipe, base, group, [updater(j["id"]) for j in group], is_cancelled)
+            for j in group:
+                event_q.put(("finished", j["id"], {}))
+            inbox.extend(j for j in work if j not in group)
+        else:
+            for j in work:
+                run_job(pipe, base, j, updater(j["id"]), lambda jid=j["id"]: is_cancelled(jid))
+                event_q.put(("finished", j["id"], {}))
+        if not inbox:
+            event_q.put(("idle", None, {}))
     try:
         pipe.close()
     except Exception:
@@ -358,8 +488,8 @@ def gpu_main(device, task_q, event_q, cancel_ev):
 class Slot:
     def __init__(self, device):
         self.device, self.index = device, int(device.split(":")[1]) if ":" in device else 0
-        self.proc = self.job = None
-        self.ready = False
+        self.proc, self.jobs = None, {}            # jobs this card is rendering right now (id -> job)
+        self.ready = self.accepting = False
         self.fails = 0              # consecutive failed jobs
         self.restarts = []          # restart timestamps (rate limit)
         self.disabled = False
@@ -372,7 +502,7 @@ class Slot:
         self.task_q, self.event_q, self.cancel_ev = ctx.Queue(), ctx.Queue(), ctx.Event()
         self.proc = ctx.Process(target=gpu_main, args=(self.device, self.task_q, self.event_q, self.cancel_ev),
                                 daemon=True, name=f"yue2-{self.device}")
-        self.proc.start(); self.ready = False; self.job = None
+        self.proc.start(); self.ready = self.accepting = False; self.jobs = {}
 
     def stop(self):
         if self.proc is None:
@@ -383,7 +513,7 @@ class Slot:
             pass
         if self.proc.is_alive():
             self.proc.kill(); self.proc.join(10)
-        self.proc, self.ready, self.job = None, False, None
+        self.proc, self.ready, self.accepting, self.jobs = None, False, False, {}
 
 
 class Worker(threading.Thread):
@@ -398,8 +528,8 @@ class Worker(threading.Thread):
     def set_gpu(self, owner, detail=""):
         with lock:
             gpu["owner"], gpu["detail"] = owner, detail
-            gpu["workers"] = [{"device": sl.device, "ready": sl.ready, "job": sl.job["title"] if sl.job else None,
-                               "disabled": sl.disabled} for sl in self.slots]
+            gpu["workers"] = [{"device": sl.device, "ready": sl.ready, "job": ", ".join(j["title"] for j in sl.jobs.values()) or None,
+                               "jobs": len(sl.jobs), "disabled": sl.disabled} for sl in self.slots]
 
     def holding(self):
         return any(sl.alive() for sl in self.slots)
@@ -429,24 +559,29 @@ class Worker(threading.Thread):
 
     def step(self):
         pend = self.pending()
-        busy = any(sl.job for sl in self.slots)
         if pend and not self.holding():
             self.acquire()
         if pend and self.holding():
             for sl in self.slots:                 # bring back crashed workers while a session is active
                 if not sl.alive() and not sl.disabled and (not sl.restarts or time.time() - sl.restarts[-1] > 20):
                     self.heal(sl, "worker process is not running")
-        # hand queued jobs to idle, loaded slots
+        # hand work to idle, loaded cards: a whole batch of plain songs at once, anything else one at a time
         for sl in self.slots:
-            if sl.alive() and sl.ready and sl.job is None and pend:
-                job = pend.pop(0)
+            if not (sl.alive() and sl.ready and sl.accepting and pend):
+                continue
+            group = self.next_group(pend)
+            if not group:
+                continue
+            for job in group:
+                pend.remove(job)
                 with lock:
-                    job.update(status="running", stage="Starting", device=sl.device)
-                sl.job = job
+                    job.update(status="running", stage="Starting" if len(group) == 1 else f"Starting (batch of {len(group)})", device=sl.device)
+                sl.jobs[job["id"]] = job
                 sl.task_q.put({k: v for k, v in job.items() if not k.startswith("_")})
-                self.set_gpu("studio", f"{sum(1 for x in self.slots if x.job)} of {len(self.slots)} GPUs rendering")
+            sl.accepting = False
+            self.set_gpu("studio", f"{sum(len(x.jobs) for x in self.slots)} songs rendering on {sum(1 for x in self.slots if x.jobs)} of {len(self.slots)} GPUs")
         self.pump()
-        busy = any(sl.job for sl in self.slots)
+        busy = any(sl.jobs for sl in self.slots)
         with lock:
             if busy or pend:
                 gpu["idle_since"] = None
@@ -466,6 +601,20 @@ class Worker(threading.Thread):
             self.set_gpu("studio", "YuE2 loaded — idle")
             time.sleep(0.5)
 
+    def next_group(self, pend):
+        """Studio jobs and anything unbatchable go alone and right away. Radio songs go as a batch of up to BATCH;
+        a short batch waits up to BATCH_WAIT s for more, unless a slot has nothing ready to play."""
+        first = pend[0]
+        if not batchable(first) or first.get("source") != "radio":
+            return [first]
+        group = [j for j in pend if batchable(j) and j.get("source") == "radio"][:BATCH]
+        import radio
+        if len(group) < BATCH and time.time() - group[0]["created"] < BATCH_WAIT and not radio.urgent():
+            idle_cards = sum(1 for sl in self.slots if sl.alive() and sl.ready and sl.accepting)
+            if idle_cards < len([sl for sl in self.slots if sl.alive() and not sl.disabled]):
+                return []                               # another card is busy: let this batch fill up a little
+        return group
+
     def pump(self):
         """Drain progress events from every slot (and notice crashed slots)."""
         deadline = time.time() + 0.5
@@ -474,32 +623,36 @@ class Worker(threading.Thread):
             for sl in self.slots:
                 if sl.proc is None:
                     continue
-                if sl.job and sl.job.get("_cancel"):
-                    sl.cancel_ev.set()
+                for j in sl.jobs.values():
+                    if j.get("_cancel") and not j.get("_cancel_sent"):
+                        j["_cancel_sent"] = True; sl.task_q.put({"cancel": j["id"]})
                 try:
                     kind, jid, data = sl.event_q.get_nowait()
                 except queue.Empty:
                     if not sl.alive() and sl.proc is not None:
-                        if sl.job:
+                        for j in list(sl.jobs.values()):
                             with lock:
-                                sl.job.update(status="failed", stage="", finished=time.time(), progress={},
-                                              error="The GPU process crashed while rendering this song")
-                            save_job(sl.job); self.finished(sl.job)
-                        log("GPU process on", sl.device, "exited unexpectedly"); sl.proc, sl.ready, sl.job = None, False, None
+                                j.update(status="failed", stage="", finished=time.time(), progress={},
+                                         error="The GPU process crashed while rendering this song")
+                            save_job(j); self.finished(j)
+                        log("GPU process on", sl.device, "exited unexpectedly"); sl.proc, sl.ready, sl.accepting, sl.jobs = None, False, False, {}
                     continue
                 got = True
                 if kind == "ready":
                     sl.ready = True; log("YuE2 ready on", sl.device)
+                elif kind == "idle":
+                    sl.accepting = True
                 elif kind == "fatal":
                     log("YuE2 failed to load on", sl.device, data.get("error")); sl.stop()
-                elif sl.job and jid == sl.job["id"]:
+                elif jid in sl.jobs:
+                    job = sl.jobs[jid]
                     if kind == "update":
                         with lock:
-                            sl.job.update(data)
+                            job.update(data)
                         if "status" in data:
-                            save_job(sl.job)
+                            save_job(job)
                     elif kind == "finished":
-                        save_job(sl.job); done = sl.job; sl.job = None
+                        save_job(job); done = sl.jobs.pop(jid)
                         self.last_activity = time.time(); self.finished(done)
                         err = done.get("error") or ""
                         sl.fails = sl.fails + 1 if done["status"] == "failed" else 0
@@ -747,7 +900,7 @@ def state():
         import radio
         return {"gpu": dict(owner=gpu["owner"], detail=gpu["detail"], llm_unit=LLM_UNIT, return_minutes=RETURN_MINUTES,
                             idle_seconds_left=idle_left, release_requested=gpu["release_requested"], workers=gpu["workers"],
-                            radio_on=radio.state["on"], radio_generating=radio.generating()),
+                            radio_on=any(c.on for c in radio.channels.values()), radio_generating=radio.generating()),
                 "queue": [summary(j) for j in queue], "library": [summary(j) for j in library[:300]],
                 "limits": {"max_queued": MAX_QUEUED}, "lyrics_writers": [label for _, _, label in LYRICS_LLMS]}
 
@@ -803,7 +956,8 @@ class Handler(BaseHTTPRequestHandler):
             if radio.handle(self, "GET", path):
                 return
         if path == "/api/state":
-            return self.send(200, state())
+            import radio
+            return self.send(200, state() | {"viewer": {"owner": radio.is_owner(self)}})
         if path == "/api/health":
             st = state()
             return self.send(200, {"ok": True, "gpu_owner": st["gpu"]["owner"], "queued": len(st["queue"]),
@@ -880,8 +1034,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/gpu/release":
                 import radio
-                if radio.generating():
-                    radio.set_power(False)          # otherwise the radio would take the GPUs straight back (reruns can stay on)
+                if not radio.is_owner(self):
+                    return self.send(403, {"error": "Only the host can hand the GPUs back (other slots may be generating)"})
+                for c in radio.channels.values():   # otherwise the radio would take the GPUs straight back (reruns can stay on)
+                    if c.generating():
+                        radio.set_power(c, False)
                 with lock:
                     busy = any(j["status"] in ("queued", "running") and j.get("source") != "radio" for j in jobs.values())
                     if not busy:
@@ -901,6 +1058,9 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/api/jobs/([\w-]+)", self.path.split("?")[0])
         if not m:
             return self.send(404, {"error": "not found"})
+        import radio
+        if not radio.is_owner(self):
+            return self.send(403, {"error": "Only the host can delete songs"})
         job = self.job_or_404(m.group(1))
         if not job:
             return
@@ -917,6 +1077,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    if "--set-owner-password" in sys.argv:          # python3 app.py --set-owner-password [--name NAME]
+        import getpass, radio
+        radio.RADIO = DATA.parent / "radio"; radio.RADIO.mkdir(parents=True, exist_ok=True)
+        pw = getpass.getpass("New host password for slot 1: ")
+        if len(pw) < 6 or pw != getpass.getpass("Again: "):
+            sys.exit("Passwords didn't match (or shorter than 6 characters); nothing changed.")
+        name = sys.argv[sys.argv.index("--name") + 1] if "--name" in sys.argv else None
+        radio.set_owner_password(pw, name)
+        sys.exit("Saved (hashed). Every existing host login was signed out; the running studio picks it up immediately.")
     load_library()
     sys.modules.setdefault("app", sys.modules["__main__"])   # radio.py imports the studio as `app`
     import radio

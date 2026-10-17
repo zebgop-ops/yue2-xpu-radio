@@ -18,9 +18,11 @@ The radio lives inside a small **Music Studio** (make individual songs or instru
 
 ## What it does
 
+- **Four slots.** Four independent broadcasts on one page. Slot 1 is the host's (password: `python3 app.py --set-owner-password --name NAME`, stored as a salted scrypt hash); slots 2–4 are claimed by visitors with a nickname and lapse after 15 min without their page open. Anyone can listen in on any slot (`/radio/stream.mp3?ch=N`), create stations and KEEP songs; only the host can delete stations or songs. A slot glows while it's on air.
 - **Two kinds of stations.** *Text* stations are defined by a description. *Learned* stations analyze uploaded songs with CLAP + librosa (genre/mood/instrument tags, vocal share, tempo, key) and also pass the song names to the songwriter — the LLM usually knows the artists far better than the automatic tags do.
 - **Lyrics themes.** A station can carry a theme ("mature Halloween horror stories", "songs about the sea"): the station keeps its musical sound and every song's words, title and mood follow the theme.
 - **A songwriter LLM** (any OpenAI-compatible server) writes a JSON spec per song: title, style line, structured lyrics sized for ~2.5–3 minutes. It sees what aired recently, what you kept / skipped / disliked, and gets a random "variety axis" each time; overused title words are banned so stations don't collapse onto one idea.
+- **Batched generation.** Plain songs from every slot are decoded together, up to 4 per card per pass (`studio/batch.py`): the AR decode is memory-bound, so a second song costs ~4 % and a card goes from 1.4× to ~2.5–3× real time. NAR + VAE still run per song. Studio jobs, instrumentals and custom scores run alone and first.
 - **YuE2 on every GPU.** One worker process per card (`xpu:0`, `xpu:1`) with XPU graphs, ~0.7× real time per card (a 3.5 min song renders in ~2.5 min), so two cards stay well ahead of playback.
 - **A critic.** Each take is embedded with CLAP and scored against the station (its description, or the corpus of learned songs), nudged by your likes/dislikes, with a near-duplicate penalty. The bottom 15 % (text stations) or 30 % (learned) are dropped.
 - **One shared broadcast.** A playout thread encodes approved tracks to a 192 kbps CBR MP3 stream at real time; every listener — the deck, VLC, a phone — gets the same audio (`/radio/stream.mp3`). New listeners get a 4 s burst so playback starts instantly; the deck works out which song is *audible* from the stream offset, so titles change exactly when the music does. Nobody listening → no songs are used up. If the spool ever runs dry, it airs the best recent runner-up, then a rerun of the station's favorites / best songs, instead of dead air.
@@ -92,6 +94,8 @@ Open `http://<host>:7860/` (studio) or `http://<host>:7860/radio`. For a service
 | `STUDIO_LLM_UNIT` | `vllm-qwen38.service` | systemd unit paused while the studio holds the GPUs |
 | `STUDIO_LYRICS_LLMS` | `http://localhost:8000/v1\|qwen38\|local LLM` | songwriter LLMs, `base_url\|model\|label`, comma-separated, tried in order. While the radio runs the local LLM is paused, so add a server on another machine. |
 | `STUDIO_RETURN_MINUTES` | `0` | auto-return the GPUs after N idle minutes (0 = only on request / radio off) |
+| `STUDIO_BATCH` | `4` | songs decoded together per card |
+| `STUDIO_BATCH_WAIT` | `15` | seconds a short radio batch may wait for batch-mates (not when a slot has nothing to play) |
 | `STUDIO_INSTRUMENTAL` | `~/yue2/YuE/skills/yue2-music/instrumental/scripts` | YuE2's instrumental helper scripts |
 
 ### Radio API (selection)
